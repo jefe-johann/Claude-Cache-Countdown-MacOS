@@ -151,16 +151,74 @@ When the agent stops:
 }
 ```
 
-### Building your own display
+## Adapting to your environment
 
-The data layer is simple: poll the JSON files, calculate `remaining = TTL - (now - reference_time)`, display however you want. The `--display stdout` backend is a good starting point. You could pipe it into:
+The tool is deliberately split into two independent pieces: **hooks** (write JSON files) and **display** (read JSON files). They communicate through a simple file format. You can swap either side without touching the other.
 
-- A menu bar app (macOS)
-- A Stream Deck button
-- A browser extension
-- A Discord bot
-- A desktop widget
-- Literally anything that can read JSON files
+### Writing your own display backend
+
+The data contract is one JSON file per session at `~/.claude/state/cache-timer-{session_id}.json`. Your display just needs to:
+
+1. Poll (glob) for `cache-timer-*.json` files
+2. Parse the JSON
+3. Calculate: `remaining = TTL - (now - stopped_at if stopped else timestamp)`
+4. Render however you want
+
+The `StdoutDisplay` class in `cache_countdown.py` is ~10 lines and shows the minimal implementation. The `--display stdout` flag outputs plain text you can pipe:
+
+```bash
+# Pipe into a menu bar tool
+python cache_countdown.py --display stdout | your-menubar-tool
+
+# Use in a shell prompt (fish/zsh/bash)
+python cache_countdown.py --once --display stdout
+
+# Feed a Stream Deck, Rainmeter widget, OBS overlay, etc.
+python cache_countdown.py --display stdout --interval 1 | your-tool
+```
+
+### Terminal-specific notes
+
+| Terminal | Recommended approach |
+|----------|---------------------|
+| **Windows Terminal** | `--display windows` (built-in). Uses Win32 `AttachConsole` to set each tab's title from a single external process. |
+| **iTerm2** | `--display ansi` works. iTerm2 also supports [proprietary escape codes](https://iterm2.com/documentation-escape-codes.html) for badges and tab colors if you want richer display. |
+| **Alacritty / WezTerm / Kitty** | `--display ansi` works out of the box. |
+| **tmux** | `--display tmux` sets `status-right`. You can also use `--display stdout` and pipe into a custom tmux status script for more control. |
+| **Screen** | Use `--display stdout` and read it from a hardstatus script. |
+| **VS Code terminal** | `--display ansi` works for the terminal title. |
+| **macOS Terminal.app** | `--display ansi` works. Terminal.app respects OSC title sequences. |
+
+### Writing your own hook
+
+If you use a different shell or want to integrate with an existing hook system, the hook just needs to write a JSON file on two events:
+
+**On any tool use (PostToolUse):** Write the file with `stopped: false` and the current timestamp. This tells the ticker "the session is alive, cache was just refreshed."
+
+**On session stop (Stop):** Update the file with `stopped: true` and `stopped_at` set to now. This is the critical event that starts the real countdown.
+
+The `host_pid` field is optional but enables the Windows Terminal display backend. It should be the PID of the process that owns the terminal tab (the direct child of your terminal emulator in the process tree). If you set it to `0`, the `ansi`, `tmux`, and `stdout` backends still work fine.
+
+### Using without hooks at all
+
+If you don't want to install hooks, you can create the timer files yourself from any script:
+
+```bash
+# Mark a session as stopped (start the countdown)
+echo '{"timestamp":"'$(date -u +%Y-%m-%dT%H:%M:%S.000Z)'","session_id":"my-session","project":"myapp","host_pid":0,"stopped":true,"stopped_at":"'$(date -u +%Y-%m-%dT%H:%M:%S.000Z)'"}' > ~/.claude/state/cache-timer-my-session.json
+
+# The ticker will pick it up within 1 second
+```
+
+### Ideas for custom displays
+
+- **macOS menu bar** (e.g., with [rumps](https://github.com/jaredks/rumps) or SwiftBar)
+- **Stream Deck button** (poll the JSON, update button text/color)
+- **Browser extension** (read files via native messaging)
+- **Desktop widget** (Rainmeter on Windows, Conky on Linux)
+- **OBS overlay** (for streaming coding sessions)
+- **Slack/Discord status** (update your status with cache state)
+- **Home Assistant** (trigger automations when cache expires)
 
 ## Prompt caching reference
 
