@@ -301,18 +301,35 @@ def main():
                 continue
 
             remaining = compute_remaining(s, args.ttl)
+            stopped = s.get("stopped")
+
+            # Three states:
+            # stopped=True  -> countdown (cache is draining)
+            # stopped=False -> HOT (agent is working)
+            # stopped=None  -> unknown (no hook has fired yet)
+            if stopped is True:
+                icon = get_icon(remaining, args.ttl)
+                countdown = format_countdown(remaining)
+            elif stopped is False:
+                icon = "\U0001f525"  # fire - HOT
+                countdown = "HOT"
+            else:
+                icon = "\u2753"  # question mark - unknown
+                countdown = "..."
+
             sessions_data.append({
                 "session_id": sid,
                 "project": s["project"],
                 "host_pid": pid,
                 "remaining": remaining,
-                "countdown": format_countdown(remaining),
-                "icon": get_icon(remaining, args.ttl),
+                "countdown": countdown,
+                "icon": icon,
             })
 
             if sid not in known:
                 known.add(sid)
-                print(f"  Tracking: {s['project']} (PID={pid})")
+                state = {True: "STOPPED", False: "active", None: "unknown"}[stopped]
+                print(f"  Tracking: {s['project']} (PID={pid}, {state})")
 
         # Sort by remaining time ascending (most urgent first)
         sessions_data.sort(key=lambda x: x["remaining"])
