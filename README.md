@@ -112,26 +112,30 @@ The default TTL is 295 seconds (4:55) rather than a full 300 (5:00). The actual 
 ## How it works
 
 ```
-Claude Code session is working...  (cache is always live, nothing to show)
+Claude Code session is working...  (no timer file exists, nothing to show)
     |
     v
 Agent stops
     |
     v
-Stop hook fires -----> writes ~/.claude/state/cache-timer-{session_id}.json
-    |                       { "timestamp": "...", "project": "myapp",
-    |                         "host_pid": 12345 }
+Stop hook ---------> creates ~/.claude/state/cache-timer-{session_id}.json
+    |                     { "timestamp": "...", "project": "myapp", "host_pid": 12345 }
     v
-cache_countdown.py --> reads timer files every second
-    |                  calculates remaining TTL from timestamp
-    |                  updates your terminal with countdown
+cache_countdown.py -> reads timer files every second, shows countdown
+    |
     v
-Tab title / tmux / stdout:  "🟢 4:32 | myapp"  -->  "🔴 0:45 | myapp"  -->  "❄️ COLD"
+Tab title:  "🟢 4:32 | myapp"  -->  "🔴 0:45 | myapp"  -->  "❄️ COLD"
+    |
+    v
+User sends new message
+    |
+    v
+Resume hook -------> deletes the timer file, countdown disappears
 ```
 
-### Why only the Stop hook?
+### Why this design?
 
-While the agent is working, every API call resets the cache. The TTL is always full. There's nothing to count down. The countdown only starts when the agent stops and the cache begins draining. The appearance of the countdown IS the alert that your cache is at risk.
+While the agent is working, every API call resets the cache. The TTL is always full. There's nothing to count down. The countdown only starts when the agent stops and the cache begins draining. **The appearance of the countdown IS the alert.** When you send a new message, the timer file is deleted and the countdown disappears because the cache is being refreshed again.
 
 ### Visual states
 

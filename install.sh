@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # Install Claude Cache Countdown
-# Adds the Stop hook to your Claude Code settings and creates an alias.
+# Adds the Stop and UserPromptSubmit hooks to your Claude Code settings.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SETTINGS_FILE="$HOME/.claude/settings.json"
-HOOK_SCRIPT="$SCRIPT_DIR/hooks/cache-timer-write.sh"
+STOP_HOOK="$SCRIPT_DIR/hooks/cache-timer-write.sh"
+RESUME_HOOK="$SCRIPT_DIR/hooks/cache-timer-resume.sh"
 
 echo "Claude Cache Countdown Installer"
 echo "================================"
@@ -18,17 +19,13 @@ if ! command -v python3 &>/dev/null; then
     exit 1
 fi
 
-if [ ! -f "$HOOK_SCRIPT" ]; then
-    echo "Error: Hook script not found at $HOOK_SCRIPT"
-    exit 1
-fi
-
-chmod +x "$HOOK_SCRIPT"
+chmod +x "$STOP_HOOK" "$RESUME_HOOK"
 
 # Create state directory
 mkdir -p "$HOME/.claude/state"
 
-echo "Hook script: $HOOK_SCRIPT"
+echo "Stop hook:   $STOP_HOOK"
+echo "Resume hook: $RESUME_HOOK"
 echo "Ticker:      $SCRIPT_DIR/cache_countdown.py"
 echo ""
 
@@ -39,43 +36,56 @@ if [ ! -f "$SETTINGS_FILE" ]; then
     echo '{}' > "$SETTINGS_FILE"
 fi
 
-# Add hook to settings.json
-echo "Adding Stop hook to $SETTINGS_FILE..."
+# Add hooks to settings.json
+echo "Adding hooks to $SETTINGS_FILE..."
 python3 -c "
 import json, sys
 
 settings_path = '$SETTINGS_FILE'
-hook_cmd = 'bash $HOOK_SCRIPT'
+stop_cmd = 'bash $STOP_HOOK'
+resume_cmd = 'bash $RESUME_HOOK'
 
 with open(settings_path, 'r') as f:
     settings = json.load(f)
 
 hooks = settings.setdefault('hooks', {})
+changed = False
+
+# Add Stop hook
 stop_hooks = hooks.setdefault('Stop', [])
+already = any('cache-timer-write' in h.get('command', '')
+              for entry in stop_hooks for h in entry.get('hooks', []))
+if not already:
+    stop_hooks.append({
+        'matcher': '',
+        'hooks': [{'type': 'command', 'command': stop_cmd, 'timeout': 5}]
+    })
+    print('  Added Stop hook.')
+    changed = True
+else:
+    print('  Stop hook already installed.')
 
-# Check if already installed
-for entry in stop_hooks:
-    for h in entry.get('hooks', []):
-        if 'cache-timer-write' in h.get('command', ''):
-            print('Stop hook already installed. Skipping.')
-            sys.exit(0)
+# Add UserPromptSubmit hook
+submit_hooks = hooks.setdefault('UserPromptSubmit', [])
+already = any('cache-timer-resume' in h.get('command', '')
+              for entry in submit_hooks for h in entry.get('hooks', []))
+if not already:
+    submit_hooks.append({
+        'matcher': '',
+        'hooks': [{'type': 'command', 'command': resume_cmd, 'timeout': 5}]
+    })
+    print('  Added UserPromptSubmit hook.')
+    changed = True
+else:
+    print('  UserPromptSubmit hook already installed.')
 
-stop_hooks.append({
-    'matcher': '',
-    'hooks': [{
-        'type': 'command',
-        'command': hook_cmd,
-        'timeout': 5
-    }]
-})
+if changed:
+    with open(settings_path, 'w') as f:
+        json.dump(settings, f, indent=2)
 
-with open(settings_path, 'w') as f:
-    json.dump(settings, f, indent=2)
-
-print('Stop hook added successfully.')
+print()
 "
 
-echo ""
 echo "Installation complete!"
 echo ""
 echo "To start the countdown ticker, run:"
@@ -84,5 +94,6 @@ echo ""
 echo "Or add an alias to your shell profile:"
 echo "  alias cache-ticker='python3 $SCRIPT_DIR/cache_countdown.py'"
 echo ""
-echo "The countdown will appear in your terminal title whenever a Claude Code"
-echo "session stops. Restart Claude Code to load the new hook."
+echo "The countdown appears when a Claude Code session stops."
+echo "It disappears when you send a new message (cache refreshes)."
+echo "Restart Claude Code to load the new hooks."

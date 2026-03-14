@@ -53,11 +53,20 @@ def read_cache_timers() -> list[dict]:
             if ts.tzinfo is None:
                 ts = ts.replace(tzinfo=timezone.utc)
 
+            # "stopped" field: True = stopped, False = active, None = unknown
+            # Files without "stopped" field are from external writers (unknown state)
+            stopped_raw = data.get("stopped")
+            if stopped_raw is None:
+                stopped = None  # unknown
+            else:
+                stopped = bool(stopped_raw)
+
             sessions.append({
                 "session_id": data.get("session_id", ""),
                 "project": data.get("project", "?"),
                 "host_pid": data.get("host_pid", 0),
                 "timestamp": ts,
+                "stopped": stopped,
                 "file": f,
             })
         except (json.JSONDecodeError, ValueError, OSError):
