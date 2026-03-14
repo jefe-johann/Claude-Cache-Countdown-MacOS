@@ -308,13 +308,12 @@ def main():
         # Sort by remaining time ascending (most urgent first)
         sessions_data.sort(key=lambda x: x["remaining"])
 
-        display.update(sessions_data, tick)
+        display.update(sessions_data)
 
         if args.once:
             print(f"\nUpdated {len(sessions_data)} session(s).")
             break
 
-        tick += 1
         time.sleep(args.interval)
 
 
