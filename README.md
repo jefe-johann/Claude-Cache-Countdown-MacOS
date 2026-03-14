@@ -19,9 +19,8 @@ As far as we can tell, **nothing else does this.** We searched extensively for e
 
 ## What it does
 
+- Shows a live countdown when your agent stops and the cache is draining
 - Tracks all active Claude Code sessions
-- Shows a live countdown of cache TTL remaining
-- **Flashes alerts** when an agent has stopped and the cache is draining
 - Cleans up automatically when sessions end
 - Supports multiple display backends (terminal titles, tmux, stdout)
 
