@@ -190,13 +190,6 @@ echo '{"timestamp":"'$(date -u +%Y-%m-%dT%H:%M:%S.000Z)'","session_id":"my-sessi
 # The ticker will pick it up within 1 second
 ```
 
-### Ideas for custom displays
-
-- **macOS menu bar** (e.g., with [rumps](https://github.com/jaredks/rumps) or SwiftBar)
-- **Stream Deck button** (poll the JSON, update button text/color)
-- **Browser extension** (read files via native messaging)
-- **Desktop widget** (Rainmeter on Windows, Conky on Linux)
-- **OBS overlay** (for streaming coding sessions)
 - **Slack/Discord status** (update your status with cache state)
 - **Home Assistant** (trigger automations when cache expires)
 
