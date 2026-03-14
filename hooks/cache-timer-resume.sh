@@ -4,17 +4,18 @@
 # No timer file = no countdown = cache is being refreshed by active work.
 #
 # Install: Add to ~/.claude/settings.json under hooks.UserPromptSubmit
+#
+# No dependencies beyond bash and standard Unix tools.
 
 set -euo pipefail
 
 INPUT=$(cat)
 
-SESSION_ID=$(echo "$INPUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('session_id',''))" 2>/dev/null || echo "")
+SESSION_ID=$(echo "$INPUT" | grep -o '"session_id":"[^"]*"' | head -1 | cut -d'"' -f4)
 if [ -z "$SESSION_ID" ]; then
     exit 0
 fi
 
-TIMER_FILE="$HOME/.claude/state/cache-timer-${SESSION_ID}.json"
-rm -f "$TIMER_FILE" 2>/dev/null
+rm -f "$HOME/.claude/state/cache-timer-${SESSION_ID}.json" 2>/dev/null
 
 exit 0

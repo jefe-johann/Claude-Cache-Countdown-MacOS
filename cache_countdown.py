@@ -166,17 +166,22 @@ class TmuxDisplay:
     """Update tmux status-right with cache countdown."""
 
     def update(self, sessions_data: list[dict]):
+        import subprocess
         if not sessions_data:
-            os.system("tmux set-option -q status-right ''")
+            subprocess.run(["tmux", "set-option", "-q", "status-right", ""],
+                           capture_output=True)
             return
         parts = []
         for s in sessions_data:
             parts.append(f"{s['icon']} {s['countdown']} {s['project']}")
         status = " | ".join(parts)
-        os.system(f"tmux set-option -q status-right '{status}'")
+        subprocess.run(["tmux", "set-option", "-q", "status-right", status],
+                       capture_output=True)
 
     def restore(self):
-        os.system("tmux set-option -qu status-right")
+        import subprocess
+        subprocess.run(["tmux", "set-option", "-qu", "status-right"],
+                       capture_output=True)
 
 
 class WindowsTerminalDisplay:
