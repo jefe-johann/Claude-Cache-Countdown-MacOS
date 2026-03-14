@@ -112,30 +112,18 @@ While the agent is working, every API call resets the cache. The TTL is always f
 
 ## Timer file format
 
-The hooks write JSON files to `~/.claude/state/cache-timer-{session_id}.json`:
+The Stop hook writes one JSON file per session to `~/.claude/state/cache-timer-{session_id}.json`:
 
 ```json
 {
-  "timestamp": "2026-03-14T10:30:00.000Z",
+  "timestamp": "2026-03-14T10:35:00.000Z",
   "session_id": "e861c4a2-5b5a-4eb3-99cd-e71c9e6b6983",
   "project": "myapp",
-  "host_pid": 12345,
-  "stopped": false
+  "host_pid": 12345
 }
 ```
 
-When the agent stops:
-
-```json
-{
-  "timestamp": "2026-03-14T10:30:00.000Z",
-  "session_id": "e861c4a2-5b5a-4eb3-99cd-e71c9e6b6983",
-  "project": "myapp",
-  "host_pid": 12345,
-  "stopped": true,
-  "stopped_at": "2026-03-14T10:35:00.000Z"
-}
-```
+That's it. `timestamp` is when the agent stopped (i.e., when the cache started draining). The ticker calculates `remaining = 300 - (now - timestamp)`.
 
 ## Adapting to your environment
 
