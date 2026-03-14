@@ -2,6 +2,7 @@
 # Clears the stopped state on the cache timer file when the user sends a new prompt.
 # This tells the ticker the session is active again (cache is being refreshed).
 #
+# Creates the timer file if it doesn't exist yet (session started after ticker).
 # Also cleans up stale timer files from other sessions sharing the same host_pid,
 # which happens when /clear or /reset creates a new session_id for the same tab.
 #
@@ -19,16 +20,47 @@ $sid = $data.session_id
 if (-not $sid) { exit 0 }
 
 $stateDir = Join-Path $env:USERPROFILE ".claude\state"
+if (-not (Test-Path $stateDir)) { New-Item -ItemType Directory -Path $stateDir -Force | Out-Null }
 $timerPath = Join-Path $stateDir "cache-timer-$sid.json"
-if (-not (Test-Path $timerPath)) { exit 0 }
 
 try {
-    $timer = Get-Content $timerPath -Raw | ConvertFrom-Json
+    # Read existing timer file, or start fresh if session is new
     $ht = @{}
-    $timer.PSObject.Properties | ForEach-Object { $ht[$_.Name] = $_.Value }
+    if (Test-Path $timerPath) {
+        $timer = Get-Content $timerPath -Raw | ConvertFrom-Json
+        $timer.PSObject.Properties | ForEach-Object { $ht[$_.Name] = $_.Value }
+    }
     $ht["stopped"] = $false
     $ht["timestamp"] = (Get-Date -Format "o")
+    $ht["session_id"] = $sid
     $ht.Remove("stopped_at")
+
+    # Populate fields for new sessions (no existing timer file)
+    if (-not $ht["project"]) {
+        if ($data.cwd) {
+            $ht["project"] = Split-Path -Leaf $data.cwd
+        } elseif ($env:CLAUDE_PROJECT_DIR) {
+            $ht["project"] = Split-Path -Leaf $env:CLAUDE_PROJECT_DIR
+        } else {
+            $ht["project"] = "unknown"
+        }
+    }
+    if (-not $ht["host_pid"] -or $ht["host_pid"] -eq 0) {
+        try {
+            $p = [System.Diagnostics.Process]::GetCurrentProcess()
+            for ($i = 0; $i -lt 10; $i++) {
+                $ppid = (Get-CimInstance Win32_Process -Filter "ProcessId=$($p.Id)" -ErrorAction SilentlyContinue).ParentProcessId
+                if (-not $ppid) { break }
+                $pp = [System.Diagnostics.Process]::GetProcessById($ppid)
+                if ($pp.ProcessName -eq "WindowsTerminal") {
+                    $ht["host_pid"] = $p.Id
+                    break
+                }
+                $p = $pp
+            }
+        } catch {}
+    }
+
     $ht | ConvertTo-Json -Compress | Set-Content $timerPath -Force
 
     # Clean up stale timer files from other sessions sharing the same host_pid.
