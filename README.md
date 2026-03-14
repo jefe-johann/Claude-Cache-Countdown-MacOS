@@ -20,13 +20,15 @@ As far as we can tell, **nothing else does this.** We searched extensively for e
 ## What it does
 
 - Shows a live countdown when your agent stops and the cache is draining
-- Tracks all active Claude Code sessions
+- Disappears when you send a new message (cache is refreshing again)
+- Tracks multiple Claude Code sessions simultaneously
 - Cleans up automatically when sessions end
 - Supports multiple display backends (terminal titles, tmux, stdout)
+- Zero dependencies (Python stdlib only)
 
 ## Quick Start
 
-### Automatic install
+### Automatic install (macOS/Linux)
 
 ```bash
 git clone https://github.com/KatsuJinCode/claude-cache-countdown.git
@@ -34,13 +36,13 @@ cd claude-cache-countdown
 bash install.sh
 ```
 
-The installer adds the Stop hook to your Claude Code settings and tells you how to run the ticker. Restart Claude Code to load the hook.
+The installer adds both hooks to your Claude Code settings. Restart Claude Code to load them.
 
 ### Manual install
 
 Two hooks:
-- **Stop** - starts the countdown when the agent finishes
-- **UserPromptSubmit** - clears the countdown when you send a new message (cache refreshes)
+- **Stop** -- starts the countdown when the agent finishes
+- **UserPromptSubmit** -- clears the countdown when you send a new message
 
 Add to `~/.claude/settings.json`:
 
@@ -75,76 +77,75 @@ Add to `~/.claude/settings.json`:
 }
 ```
 
-**Windows (PowerShell 7):** Use `cache-timer-write.ps1` instead:
+**Windows (PowerShell 7):** Use the `.ps1` versions instead:
 ```json
 "command": "pwsh.exe -NoProfile -File C:/path/to/claude-cache-countdown/hooks/cache-timer-write.ps1"
+"command": "pwsh.exe -NoProfile -File C:/path/to/claude-cache-countdown/hooks/cache-timer-resume.ps1"
 ```
 
-### 2. Run the countdown
+Then run the countdown:
 
 ```bash
 python cache_countdown.py
 ```
 
-That's it. The ticker auto-detects your platform and picks the right display.
-
-## Display Backends
-
-| Backend | Flag | How it works |
-|---------|------|--------------|
-| **Windows Terminal** | `--display windows` | Sets each tab's title via Win32 `AttachConsole` + `SetConsoleTitleW`. One ticker manages all tabs. |
-| **ANSI title** | `--display ansi` | Sets terminal title via `\033]0;title\007`. Works on iTerm2, Alacritty, WezTerm, Kitty, most modern terminals. |
-| **tmux** | `--display tmux` | Updates `status-right` with countdown for all sessions. |
-| **stdout** | `--display stdout` | Prints countdown to stdout. Pipe it into whatever you want. |
-| **auto** | (default) | Windows Terminal on Windows, tmux if `$TMUX` is set, ANSI otherwise. |
-
-## Options
-
-```
---ttl 295       Cache TTL in seconds (default: 295, 5 seconds early for safety margin)
---ttl 3600      Use 1-hour TTL if your API calls use "ttl": "1h"
---interval 1    Update frequency in seconds (default: 1)
---once          Run once and exit (for testing or scripting)
-```
-
-The default TTL is 295 seconds (4:55) rather than a full 300 (5:00). The actual cache TTL is 5 minutes, but the timer starts from when we detect the stop event, not from the last API call. The 5-second safety margin means you'll never see "0:01" and think you have time when the cache has already expired.
+The ticker auto-detects your platform and picks the right display backend.
 
 ## How it works
 
 ```
-Claude Code session is working...  (no timer file exists, nothing to show)
+Claude Code session is working...     (no timer file, nothing to show)
     |
     v
 Agent stops
     |
     v
-Stop hook ---------> creates ~/.claude/state/cache-timer-{session_id}.json
-    |                     { "timestamp": "...", "project": "myapp", "host_pid": 12345 }
+Stop hook --------> creates cache-timer-{session_id}.json
+    |                    { "timestamp": "...", "project": "myapp", "host_pid": 12345 }
     v
-cache_countdown.py -> reads timer files every second, shows countdown
+Ticker ------------> reads timer files every second, shows countdown
     |
-    v
-Tab title:  "🟢 4:32 | myapp"  -->  "🔴 0:45 | myapp"  -->  "❄️ COLD"
-    |
+    |                "🟢 4:32 | myapp"  -->  "🟡 2:15 | myapp"  -->  "🔴 0:45 | myapp"  -->  "❄️ COLD"
     v
 User sends new message
     |
     v
-Resume hook -------> deletes the timer file, countdown disappears
+Resume hook ------> deletes the timer file, countdown disappears
 ```
 
-### Why this design?
+While the agent is working, every API call resets the cache. The TTL is always full. There's nothing to count down. The countdown only starts when the agent stops and the cache begins draining. **The appearance of the countdown IS the alert.** When you send a new message, the timer file is deleted because the cache is being refreshed again.
 
-While the agent is working, every API call resets the cache. The TTL is always full. There's nothing to count down. The countdown only starts when the agent stops and the cache begins draining. **The appearance of the countdown IS the alert.** When you send a new message, the timer file is deleted and the countdown disappears because the cache is being refreshed again.
-
-### Visual states
+## Visual states
 
 | Display | Meaning |
 |---------|---------|
-| `🟢 4:32 \| myapp` | Cache is fresh, you have time |
-| `🟡 2:15 \| myapp` | Cache aging, don't wait too long |
-| `🔴 0:45 \| myapp` | Cache about to expire, act now |
+| (nothing) | Agent is working, cache is always fresh |
+| `🟢 4:32 \| myapp` | Agent stopped, cache is fresh, you have time |
+| `🟡 2:15 \| myapp` | Agent stopped, cache aging, don't wait too long |
+| `🔴 0:45 \| myapp` | Agent stopped, cache about to expire, act now |
 | `❄️ COLD \| myapp` | Cache expired |
+
+## Display backends
+
+| Backend | Flag | How it works |
+|---------|------|--------------|
+| **Windows Terminal** | `--display windows` | Sets each tab's title via Win32 `AttachConsole` + `SetConsoleTitleW`. One ticker process manages all tabs. |
+| **ANSI title** | `--display ansi` | Sets terminal title via `\033]0;title\007`. Works on iTerm2, Alacritty, WezTerm, Kitty, most modern terminals. |
+| **tmux** | `--display tmux` | Updates `status-right` with countdown for all sessions. |
+| **stdout** | `--display stdout` | Prints countdown to stdout. Pipe into other tools. |
+| **auto** | (default) | Windows Terminal on Windows, tmux if `$TMUX` is set, ANSI otherwise. |
+
+## Options
+
+```
+--ttl 295       Cache TTL in seconds (default: 295, 5s safety margin under the 5min cache)
+--ttl 3600      Use if your API calls use the 1-hour cache ("ttl": "1h")
+--interval 1    Update frequency in seconds (default: 1)
+--once          Run once and exit (for testing or scripting)
+--display X     Choose display backend (auto, windows, ansi, tmux, stdout)
+```
+
+The default TTL is 295 seconds (4:55) rather than 300 (5:00). The timer starts from when we detect the stop event, not from the last API call. The 5-second buffer means you'll never see "0:01" and think you have time when the cache has already expired.
 
 ## Timer file format
 
@@ -159,65 +160,53 @@ The Stop hook writes one JSON file per session to `~/.claude/state/cache-timer-{
 }
 ```
 
-That's it. `timestamp` is when the agent stopped (i.e., when the cache started draining). The ticker calculates `remaining = 300 - (now - timestamp)`.
+`timestamp` is when the agent stopped. The ticker calculates `remaining = 295 - (now - timestamp)`.
+
+The UserPromptSubmit hook deletes this file when the user resumes. No file = no countdown.
 
 ## Adapting to your environment
 
-The tool is deliberately split into two independent pieces: **hooks** (write JSON files) and **display** (read JSON files). They communicate through a simple file format. You can swap either side without touching the other.
+The tool is split into two independent pieces: **hooks** (write/delete JSON files) and **display** (read JSON files). They communicate through a simple file format. You can swap either side without touching the other.
 
 ### Writing your own display backend
 
-The data contract is one JSON file per session at `~/.claude/state/cache-timer-{session_id}.json`. Your display just needs to:
-
-1. Poll (glob) for `cache-timer-*.json` files
-2. Parse the JSON
-3. Calculate: `remaining = TTL - (now - timestamp)`
-4. Render however you want
-
-The `StdoutDisplay` class in `cache_countdown.py` is ~10 lines and shows the minimal implementation. The `--display stdout` flag outputs plain text you can pipe:
+The `StdoutDisplay` class in `cache_countdown.py` is about 10 lines and shows the minimal implementation. The `--display stdout` flag outputs plain text you can pipe:
 
 ```bash
-# Pipe into a menu bar tool
-python cache_countdown.py --display stdout | your-menubar-tool
-
-# Use in a shell prompt (fish/zsh/bash)
+python cache_countdown.py --display stdout | your-tool
 python cache_countdown.py --once --display stdout
-
-# Feed a Stream Deck, Rainmeter widget, OBS overlay, etc.
-python cache_countdown.py --display stdout --interval 1 | your-tool
 ```
 
-### Terminal-specific notes
+### Terminal compatibility
 
-| Terminal | Recommended approach |
+| Terminal | Recommended display |
 |----------|---------------------|
-| **Windows Terminal** | `--display windows` (built-in). Uses Win32 `AttachConsole` to set each tab's title from a single external process. |
-| **iTerm2** | `--display ansi` works. iTerm2 also supports [proprietary escape codes](https://iterm2.com/documentation-escape-codes.html) for badges and tab colors if you want richer display. |
-| **Alacritty / WezTerm / Kitty** | `--display ansi` works out of the box. |
-| **tmux** | `--display tmux` sets `status-right`. You can also use `--display stdout` and pipe into a custom tmux status script for more control. |
-| **Screen** | Use `--display stdout` and read it from a hardstatus script. |
-| **VS Code terminal** | `--display ansi` works for the terminal title. |
-| **macOS Terminal.app** | `--display ansi` works. Terminal.app respects OSC title sequences. |
+| **Windows Terminal** | `--display windows` |
+| **iTerm2 / Alacritty / WezTerm / Kitty** | `--display ansi` |
+| **tmux** | `--display tmux` |
+| **VS Code terminal / macOS Terminal.app** | `--display ansi` |
+| **GNU Screen** | `--display stdout` piped to hardstatus |
 
-### Writing your own hook
+### Writing your own hooks
 
-If you use a different shell or want to integrate with an existing hook system, you need two actions:
+Two actions:
 
-**On session stop (Stop):** Create `~/.claude/state/cache-timer-{session_id}.json` with `timestamp` set to now. The ticker picks it up and starts counting down.
+1. **On session stop:** Create `~/.claude/state/cache-timer-{session_id}.json` with `timestamp` set to now.
+2. **On user prompt:** Delete the timer file.
 
-**On user prompt (UserPromptSubmit):** Delete the timer file. No file = no countdown = session is active.
+The `host_pid` field is optional. It enables the Windows Terminal display backend (needs the PID of the terminal tab's direct child process). Set it to `0` if you don't need Windows Terminal tab titles.
 
-The `host_pid` field is optional but enables the Windows Terminal display backend. It should be the PID of the process that owns the terminal tab (the direct child of your terminal emulator in the process tree). If you set it to `0`, the `ansi`, `tmux`, and `stdout` backends still work fine.
+### Using without hooks
 
-### Using without hooks at all
-
-If you don't want to install hooks, you can create the timer files yourself from any script:
+You can create and delete timer files yourself from any script:
 
 ```bash
-# Start a countdown (e.g., when you notice your agent has stopped)
-echo '{"timestamp":"'$(date -u +%Y-%m-%dT%H:%M:%S.000Z)'","session_id":"my-session","project":"myapp","host_pid":0}' > ~/.claude/state/cache-timer-my-session.json
+# Start a countdown
+echo '{"timestamp":"'$(date -u +%Y-%m-%dT%H:%M:%S.000Z)'","session_id":"manual","project":"myapp","host_pid":0}' \
+  > ~/.claude/state/cache-timer-manual.json
 
-# The ticker will pick it up within 1 second
+# Clear it
+rm ~/.claude/state/cache-timer-manual.json
 ```
 
 ## Prompt caching reference
@@ -227,14 +216,14 @@ echo '{"timestamp":"'$(date -u +%Y-%m-%dT%H:%M:%S.000Z)'","session_id":"my-sessi
 | 5 minutes (default) | 1.25x base | 0.1x base | Claude Code uses this automatically |
 | 1 hour (opt-in) | 2x base | 0.1x base | Requires `"ttl": "1h"` in API call |
 
-### What a cache miss actually costs (Opus 4.6, $15/MTok base)
+### What a cache miss costs (Opus 4.6, $15/MTok base)
 
-| Cached tokens | Cache hit | Cache miss (re-write) | Cost of being late |
-|--------------|-----------|----------------------|-------------------|
-| 100K | $0.15 | $1.88 | $1.73 |
-| 500K | $0.75 | $9.38 | $8.63 |
-| 900K | $1.35 | $16.88 | **$15.53** |
-| 1M (max) | $1.50 | $18.75 | **$17.25** |
+| Context size | Cache hit | Cache miss (re-write) | Cost of being late |
+|-------------|-----------|----------------------|-------------------|
+| 100K (light session) | $0.15 | $1.88 | $1.73 |
+| 500K (medium session) | $0.75 | $9.38 | $8.63 |
+| 900K (heavy session) | $1.35 | $16.88 | **$15.53** |
+| 1M (max context) | $1.50 | $18.75 | **$17.25** |
 
 - Cache reads are 90% cheaper than uncached input
 - Each API call that hits the cache resets the TTL timer
