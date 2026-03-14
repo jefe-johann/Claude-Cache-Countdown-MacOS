@@ -38,7 +38,9 @@ The installer adds the Stop hook to your Claude Code settings and tells you how 
 
 ### Manual install
 
-You only need the **Stop** hook. While the agent is working, every API call resets the cache, so the TTL is always full. The countdown only starts when the agent stops and the cache begins draining.
+Two hooks:
+- **Stop** - starts the countdown when the agent finishes
+- **UserPromptSubmit** - clears the countdown when you send a new message (cache refreshes)
 
 Add to `~/.claude/settings.json`:
 
@@ -52,6 +54,18 @@ Add to `~/.claude/settings.json`:
           {
             "type": "command",
             "command": "bash /path/to/claude-cache-countdown/hooks/cache-timer-write.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash /path/to/claude-cache-countdown/hooks/cache-timer-resume.sh",
             "timeout": 5
           }
         ]
