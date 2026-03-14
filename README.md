@@ -221,14 +221,27 @@ rm ~/.claude/state/cache-timer-manual.json
 | 5 minutes (default) | 1.25x base | 0.1x base | Claude Code uses this automatically |
 | 1 hour (opt-in) | 2x base | 0.1x base | Requires `"ttl": "1h"` in API call |
 
-### What a cache miss costs (Opus 4.6, $15/MTok base)
+### Opus 4.6 pricing tiers
 
-| Context size | Cache hit | Cache miss (re-write) | Cost of being late |
-|-------------|-----------|----------------------|-------------------|
-| 100K (light session) | $0.15 | $1.88 | $1.73 |
-| 500K (medium session) | $0.75 | $9.38 | $8.63 |
-| 900K (heavy session) | $1.35 | $16.88 | **$15.53** |
-| 1M (max context) | $1.50 | $18.75 | **$17.25** |
+Opus 4.6 has a **pricing cliff at 200K tokens**. If your context exceeds 200K by even one token, the entire request is billed at the premium rate.
+
+| Tier | Input | Cache write (1.25x) | Cache read (0.1x) |
+|------|-------|--------------------|--------------------|
+| Standard (up to 200K) | $5.00/MTok | $6.25/MTok | $0.50/MTok |
+| Premium (200K to 1M) | $10.00/MTok | $12.50/MTok | $1.00/MTok |
+
+### What a cache miss costs
+
+| Context size | Tier | Cache hit | Cache miss (re-write) | Cost of being late |
+|-------------|------|-----------|----------------------|-------------------|
+| 100K | Standard | $0.05 | $0.63 | $0.58 |
+| 200K | Standard | $0.10 | $1.25 | $1.15 |
+| 201K | **Premium** | $0.20 | $2.51 | **$2.31** |
+| 500K | Premium | $0.50 | $6.25 | **$5.75** |
+| 900K | Premium | $0.90 | $11.25 | **$10.35** |
+| 1M | Premium | $1.00 | $12.50 | **$11.50** |
+
+Note the jump from 200K to 201K: crossing the threshold doubles the cost of the entire request, not just the overflow.
 
 - Cache reads are 90% cheaper than uncached input
 - Each API call that hits the cache resets the TTL timer
