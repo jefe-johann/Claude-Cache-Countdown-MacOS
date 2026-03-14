@@ -78,11 +78,13 @@ That's it. The ticker auto-detects your platform and picks the right display.
 ## Options
 
 ```
---ttl 300       Cache TTL in seconds (default: 300 = 5 minutes)
+--ttl 295       Cache TTL in seconds (default: 295, 5 seconds early for safety margin)
 --ttl 3600      Use 1-hour TTL if your API calls use "ttl": "1h"
 --interval 1    Update frequency in seconds (default: 1)
 --once          Run once and exit (for testing or scripting)
 ```
+
+The default TTL is 295 seconds (4:55) rather than a full 300 (5:00). The actual cache TTL is 5 minutes, but the timer starts from when we detect the stop event, not from the last API call. The 5-second safety margin means you'll never see "0:01" and think you have time when the cache has already expired.
 
 ## How it works
 
