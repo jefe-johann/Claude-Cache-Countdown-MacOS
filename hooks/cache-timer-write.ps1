@@ -36,7 +36,28 @@ if (Test-Path $cacheTimerPath) {
     }
 }
 
-# Discover host PID if not already known (child of WindowsTerminal)
+# Discover project name if not already known
+if (-not $timerData["project"]) {
+    if ($data.cwd) {
+        $timerData["project"] = Split-Path -Leaf $data.cwd
+    } elseif ($env:CLAUDE_PROJECT_DIR) {
+        $timerData["project"] = Split-Path -Leaf $env:CLAUDE_PROJECT_DIR
+    } else {
+        $timerData["project"] = "unknown"
+    }
+}
+
+# Mark as stopped - timestamp is NOW (when the cache starts draining)
+# WRITE IMMEDIATELY before PID walk, which can cold-start WMI and timeout
+$timerData["stopped"] = $true
+$timerData["timestamp"] = (Get-Date -Format "o")
+$timerData["session_id"] = $sid
+
+$timerData | ConvertTo-Json -Compress | Set-Content $cacheTimerPath -Force
+
+# Best-effort: discover host PID if not already known (child of WindowsTerminal)
+# This is expensive on first call (WMI cold start) and optional - only used for
+# Windows Terminal tab title display. If it times out, the timer file is already written.
 if (-not $timerData["host_pid"] -or $timerData["host_pid"] -eq 0) {
     try {
         $p = [System.Diagnostics.Process]::GetCurrentProcess()
@@ -50,25 +71,9 @@ if (-not $timerData["host_pid"] -or $timerData["host_pid"] -eq 0) {
             }
             $p = $pp
         }
+        # Re-write with PID if we found it
+        $timerData | ConvertTo-Json -Compress | Set-Content $cacheTimerPath -Force
     } catch {}
 }
-
-# Discover project name if not already known
-if (-not $timerData["project"]) {
-    if ($data.cwd) {
-        $timerData["project"] = Split-Path -Leaf $data.cwd
-    } elseif ($env:CLAUDE_PROJECT_DIR) {
-        $timerData["project"] = Split-Path -Leaf $env:CLAUDE_PROJECT_DIR
-    } else {
-        $timerData["project"] = "unknown"
-    }
-}
-
-# Mark as stopped - timestamp is NOW (when the cache starts draining)
-$timerData["stopped"] = $true
-$timerData["timestamp"] = (Get-Date -Format "o")
-$timerData["session_id"] = $sid
-
-$timerData | ConvertTo-Json -Compress | Set-Content $cacheTimerPath -Force
 
 exit 0
