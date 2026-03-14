@@ -197,9 +197,11 @@ python cache_countdown.py --display stdout --interval 1 | your-tool
 
 ### Writing your own hook
 
-If you use a different shell or want to integrate with an existing hook system, the hook just needs to write a JSON file on two events:
+If you use a different shell or want to integrate with an existing hook system, you need two actions:
 
-**On session stop (Stop):** Write the timer file with `timestamp` set to now. That's it. The ticker picks it up and starts counting down.
+**On session stop (Stop):** Create `~/.claude/state/cache-timer-{session_id}.json` with `timestamp` set to now. The ticker picks it up and starts counting down.
+
+**On user prompt (UserPromptSubmit):** Delete the timer file. No file = no countdown = session is active.
 
 The `host_pid` field is optional but enables the Windows Terminal display backend. It should be the PID of the process that owns the terminal tab (the direct child of your terminal emulator in the process tree). If you set it to `0`, the `ansi`, `tmux`, and `stdout` backends still work fine.
 
