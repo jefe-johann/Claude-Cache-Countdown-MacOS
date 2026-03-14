@@ -30,12 +30,8 @@ try {
         $timer = Get-Content $timerPath -Raw | ConvertFrom-Json
         $timer.PSObject.Properties | ForEach-Object { $ht[$_.Name] = $_.Value }
     }
-    $ht["stopped"] = $false
-    $ht["timestamp"] = (Get-Date -Format "o")
-    $ht["session_id"] = $sid
-    $ht.Remove("stopped_at")
 
-    # Populate fields for new sessions (no existing timer file)
+    # Populate project for new sessions
     if (-not $ht["project"]) {
         if ($data.cwd) {
             $ht["project"] = Split-Path -Leaf $data.cwd
@@ -45,6 +41,17 @@ try {
             $ht["project"] = "unknown"
         }
     }
+
+    # WRITE IMMEDIATELY before PID walk, which can cold-start WMI and timeout
+    $ht["stopped"] = $false
+    $ht["timestamp"] = (Get-Date -Format "o")
+    $ht["session_id"] = $sid
+    $ht.Remove("stopped_at")
+
+    $ht | ConvertTo-Json -Compress | Set-Content $timerPath -Force
+
+    # Best-effort: discover host PID if not already known (child of WindowsTerminal)
+    # Expensive on first call (WMI cold start), optional for tab title display only.
     if (-not $ht["host_pid"] -or $ht["host_pid"] -eq 0) {
         try {
             $p = [System.Diagnostics.Process]::GetCurrentProcess()
@@ -58,10 +65,10 @@ try {
                 }
                 $p = $pp
             }
+            # Re-write with PID if we found it
+            $ht | ConvertTo-Json -Compress | Set-Content $timerPath -Force
         } catch {}
     }
-
-    $ht | ConvertTo-Json -Compress | Set-Content $timerPath -Force
 
     # Clean up stale timer files from other sessions sharing the same host_pid.
     # This happens when /clear or /reset creates a new session_id for the same tab.
