@@ -306,8 +306,8 @@ def main():
                 known.add(sid)
                 print(f"  Tracking: {s['project']} (PID={pid})")
 
-        # Sort: stopped sessions first, then by remaining time ascending
-        sessions_data.sort(key=lambda x: (not x["stopped"], x["remaining"]))
+        # Sort by remaining time ascending (most urgent first)
+        sessions_data.sort(key=lambda x: x["remaining"])
 
         display.update(sessions_data, tick)
 
