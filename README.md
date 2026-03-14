@@ -26,7 +26,17 @@ As far as we can tell, **nothing else does this.** We searched extensively for e
 
 ## Quick Start
 
-### 1. Install the hook
+### Automatic install
+
+```bash
+git clone https://github.com/KatsuJinCode/claude-cache-countdown.git
+cd claude-cache-countdown
+bash install.sh
+```
+
+The installer adds the Stop hook to your Claude Code settings and tells you how to run the ticker. Restart Claude Code to load the hook.
+
+### Manual install
 
 You only need the **Stop** hook. While the agent is working, every API call resets the cache, so the TTL is always full. The countdown only starts when the agent stops and the cache begins draining.
 
