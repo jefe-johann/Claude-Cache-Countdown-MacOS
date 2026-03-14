@@ -297,17 +297,14 @@ def main():
                 "session_id": sid,
                 "project": s["project"],
                 "host_pid": pid,
-                "stopped": s["stopped"],
                 "remaining": remaining,
                 "countdown": format_countdown(remaining),
-                "icon": get_icon(remaining, args.ttl, s["stopped"], tick),
-                "status": get_status(remaining, args.ttl, s["stopped"]),
+                "icon": get_icon(remaining, args.ttl),
             })
 
             if sid not in known:
                 known.add(sid)
-                state = "STOPPED" if s["stopped"] else "active"
-                print(f"  Tracking: {s['project']} (PID={pid}, {state})")
+                print(f"  Tracking: {s['project']} (PID={pid})")
 
         # Sort: stopped sessions first, then by remaining time ascending
         sessions_data.sort(key=lambda x: (not x["stopped"], x["remaining"]))
