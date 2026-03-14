@@ -208,6 +208,15 @@ echo '{"timestamp":"'$(date -u +%Y-%m-%dT%H:%M:%S.000Z)'","session_id":"my-sessi
 | 5 minutes (default) | 1.25x base | 0.1x base | Claude Code uses this automatically |
 | 1 hour (opt-in) | 2x base | 0.1x base | Requires `"ttl": "1h"` in API call |
 
+### What a cache miss actually costs (Opus 4.6, $15/MTok base)
+
+| Cached tokens | Cache hit | Cache miss (re-write) | Cost of being late |
+|--------------|-----------|----------------------|-------------------|
+| 100K | $0.15 | $1.88 | $1.73 |
+| 500K | $0.75 | $9.38 | $8.63 |
+| 900K | $1.35 | $16.88 | **$15.53** |
+| 1M (max) | $1.50 | $18.75 | **$17.25** |
+
 - Cache reads are 90% cheaper than uncached input
 - Each API call that hits the cache resets the TTL timer
 - Cache hits improve latency (faster time-to-first-token)
