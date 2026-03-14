@@ -28,12 +28,17 @@ We couldn't find anything else that does this. Prompt caching is well-documented
 
 ## Quick Start
 
-### Automatic install (macOS/Linux)
+### Automatic install
 
 ```bash
 git clone https://github.com/KatsuJinCode/claude-cache-countdown.git
 cd claude-cache-countdown
+
+# macOS / Linux
 bash install.sh
+
+# Windows (PowerShell 7)
+pwsh -File install.ps1
 ```
 
 The installer adds both hooks to your Claude Code settings. Restart Claude Code to load them.
