@@ -90,6 +90,18 @@ def init_config(path: Path = None):
                 "type": "bell",
                 "count": 3,
                 "label": "~1 min left"
+            },
+            {
+                "_comment": "Warning at 30 seconds",
+                "at": 30,
+                "type": "bell",
+                "count": 5,
+                "label": "30 seconds"
+            },
+            {
+                "_comment": "Bell every second for final 10 seconds",
+                "at": 10,
+                "type": "countdown"
             }
         ]
     }
