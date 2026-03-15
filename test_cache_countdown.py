@@ -277,11 +277,11 @@ write_timer("fresh-cold", seconds_ago=300, stopped=True)
 
 print("\n=== _format_session_line ===")
 test("basic format", cache_countdown._format_session_line(
-    {"icon": "X", "countdown": "1:00", "project": "app"}) == "X 1:00 | app")
+    {"icon": "X", "countdown": "1:00", "project": "app"}) == "X 1:00 app")
 test("format with cost", cache_countdown._format_session_line(
-    {"icon": "X", "countdown": "1:00", "project": "app", "cost": "$5.75"}) == "X 1:00 | app ($5.75)")
+    {"icon": "X", "countdown": "1:00", "project": "app", "cost": "$5.75"}) == "X 1:00 app $5.75")
 test("format without cost key", cache_countdown._format_session_line(
-    {"icon": "X", "countdown": "HOT", "project": "app"}) == "X HOT | app")
+    {"icon": "X", "countdown": "HOT", "project": "app"}) == "X HOT app")
 
 # --- Cleanup ---
 shutil.rmtree(TEST_DIR, ignore_errors=True)
