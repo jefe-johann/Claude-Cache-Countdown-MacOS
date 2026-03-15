@@ -129,6 +129,53 @@ bad_path.write_text('{"session_id":"x"}', encoding="utf-8")
 test("missing timestamp is skipped", len(cache_countdown.read_cache_timers()) == 0)
 bad_path.unlink()
 
+print("\n=== AlertManager ===")
+
+# Quiet mode suppresses all alerts
+am_quiet = cache_countdown.AlertManager(quiet=True)
+am_quiet.check("s1", "proj", True, 200, False)
+test("quiet mode: no alerts fired", len(am_quiet._fired.get("s1", set())) == 0)
+
+# Normal mode fires stop alert on first check
+am = cache_countdown.AlertManager(quiet=False)
+# Monkey-patch bell to avoid actual terminal noise during tests
+_bell_count = 0
+_orig_bell = cache_countdown.bell
+def _mock_bell(count=1, spacing=0.15):
+    global _bell_count
+    _bell_count += count
+cache_countdown.bell = _mock_bell
+
+am.check("s1", "proj", True, 200, False)
+test("stop alert fires on first stopped check", "stop" in am._fired["s1"])
+test("urgent not fired yet (200s remaining)", "urgent" not in am._fired["s1"])
+test("bell rang once for stop", _bell_count == 1)
+
+# Second check at same remaining: no repeat
+prev_count = _bell_count
+am.check("s1", "proj", True, 200, True)
+test("stop alert does not repeat", _bell_count == prev_count)
+
+# Urgent fires at <=60s
+am.check("s1", "proj", True, 55, True)
+test("urgent alert fires at 55s", "urgent" in am._fired["s1"])
+test("bell rang 3 more times for urgent", _bell_count == prev_count + 3)
+
+# Urgent does not repeat
+prev_count = _bell_count
+am.check("s1", "proj", True, 30, True)
+test("urgent does not repeat", _bell_count == prev_count)
+
+# Reset when session becomes active
+am.check("s1", "proj", False, 0, True)
+test("alerts reset when session active", "s1" not in am._fired)
+
+# After reset, stop alert fires again
+am.check("s1", "proj", True, 250, True)
+test("stop alert fires again after reset", "stop" in am._fired["s1"])
+
+cache_countdown.bell = _orig_bell
+
 # --- Cleanup ---
 shutil.rmtree(TEST_DIR, ignore_errors=True)
 
