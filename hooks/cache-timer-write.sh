@@ -65,7 +65,7 @@ elif [ -d "/proc/$$" ]; then
 fi
 
 # Write timer file
-printf '{"timestamp":"%s","session_id":"%s","project":"%s","host_pid":%d,"stopped":true}' \
-    "$TIMESTAMP" "$SESSION_ID" "$PROJECT" "$HOST_PID" > "$TIMER_FILE"
+printf '{"timestamp":"%s","session_id":"%s","project":"%s","host_pid":%d,"stopped":true,"cwd":"%s"}' \
+    "$TIMESTAMP" "$SESSION_ID" "$PROJECT" "$HOST_PID" "${CWD:-}" > "$TIMER_FILE"
 
 exit 0
