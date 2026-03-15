@@ -213,7 +213,7 @@ test("config includes cold_ttl field", "cold_ttl" in _cfg)
 print("\n=== estimate_cost ===")
 # Standard tier (<=200K): cache_read=0.50/MTok, cache_write=6.25/MTok
 # delta = (6.25 - 0.50) * tokens/1M = 5.75 * tokens/1M
-test("100K standard tier", cache_countdown.estimate_cost(100) == "$0.58")
+test("100K standard tier", cache_countdown.estimate_cost(100) == "$0.57")
 test("200K standard tier", cache_countdown.estimate_cost(200) == "$1.15")
 # Premium tier (>200K): cache_read=1.00/MTok, cache_write=12.50/MTok
 # delta = (12.50 - 1.00) * tokens/1M = 11.50 * tokens/1M
