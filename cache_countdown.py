@@ -733,6 +733,7 @@ def main():
             except OSError:
                 pass
             known.discard(s["session_id"])
+            cost_cache.pop(s["session_id"], None)
 
         sessions = list(by_pid.values())
         sessions_data = []
