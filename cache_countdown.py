@@ -613,8 +613,6 @@ def main():
     config = load_config(config_path)
     alert_config = config.get("alerts", DEFAULT_ALERTS)
 
-    # Config file can set defaults for context and cold_ttl
-    context_k = args.context or config.get("context", 0)
     cold_ttl = args.cold_ttl if args.cold_ttl != 600 else config.get("cold_ttl", 600)
 
     display = get_display(args.display)
@@ -622,9 +620,7 @@ def main():
 
     print(f"Cache Countdown started (TTL={args.ttl}s, display={args.display})")
     print(f"Watching: {STATE_DIR / 'cache-timer-*.json'}")
-    if context_k > 0:
-        cost = estimate_cost(context_k)
-        print(f"Context: ~{context_k}K tokens ({cost} at risk per cache miss)")
+    print("Cost: reads context from statusline data (per-session, live)")
     if args.quiet:
         print("Alerts: disabled (--quiet). Run without --quiet to enable.")
     else:
