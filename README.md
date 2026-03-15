@@ -50,7 +50,7 @@ The installer adds both hooks to your Claude Code settings. Restart Claude Code 
 
 Two hooks:
 - **Stop** -- starts the countdown when the agent finishes
-- **UserPromptSubmit** -- clears the countdown when you send a new message
+- **UserPromptSubmit** -- switches to HOT when you send a new message
 
 Add to `~/.claude/settings.json`:
 
