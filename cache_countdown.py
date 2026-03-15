@@ -700,7 +700,7 @@ def main():
                 "countdown": countdown,
                 "icon": icon,
             }
-            if context_k > 0 and stopped is True and remaining > 0:
+            if context_k > 0:
                 entry["cost"] = estimate_cost(context_k)
             sessions_data.append(entry)
 
