@@ -678,7 +678,7 @@ def main():
 
     print(f"Cache Countdown started (TTL={args.ttl}s, display={args.display})")
     print(f"Watching: {STATE_DIR / 'cache-timer-*.json'}")
-    print("Cost: reads context from statusline data (per-session, live)")
+    print("Cost: auto-detected from statusline data or transcript on stop")
     if args.quiet:
         print("Alerts: disabled (--quiet). Run without --quiet to enable.")
     else:
