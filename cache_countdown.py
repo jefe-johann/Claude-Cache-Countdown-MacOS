@@ -215,29 +215,40 @@ def estimate_cost(context_tokens: int, exceeds_200k: bool = False) -> str:
     return f"${delta:.2f}"
 
 
-def read_session_context(session_id: str) -> tuple[int, bool]:
-    """Read context size from the statusline data file for a session.
+def read_session_context(session_id: str, timer_data: dict = None) -> tuple[int, bool]:
+    """Read context size for a session using a three-tier fallback.
+
+    Tier 0: context_tokens embedded in timer file by stop hook
+    Tier 1: statusline-data-{session_id}.json (from statusline wrapper)
+    Tier 2: (transcript parsing done in stop hook, result in tier 0)
 
     Returns (total_input_tokens, exceeds_200k).
-    Falls back to (0, False) if the file doesn't exist or can't be parsed.
+    Falls back to (0, False) if no data is available.
     """
+    # Tier 0: stop hook already parsed transcript/statusline and embedded it
+    if timer_data:
+        ctx = timer_data.get("context_tokens", 0)
+        if ctx and ctx > 0:
+            return ctx, timer_data.get("exceeds_200k", False)
+
+    # Tier 1: statusline data file
     data_file = STATE_DIR / f"statusline-data-{session_id}.json"
     try:
-        if not data_file.is_file():
-            return 0, False
-        data = json.loads(data_file.read_text(encoding="utf-8"))
-        ctx = data.get("context_window", {})
-        usage = ctx.get("current_usage")
-        if not usage:
-            return 0, False
-        # Total cached tokens = what would need to be re-written on cache miss
-        total = (usage.get("cache_creation_input_tokens", 0)
-                 + usage.get("cache_read_input_tokens", 0)
-                 + usage.get("input_tokens", 0))
-        exceeds = data.get("exceeds_200k_tokens", False)
-        return total, exceeds
+        if data_file.is_file():
+            data = json.loads(data_file.read_text(encoding="utf-8"))
+            ctx_win = data.get("context_window", {})
+            usage = ctx_win.get("current_usage")
+            if usage:
+                total = (usage.get("cache_creation_input_tokens", 0)
+                         + usage.get("cache_read_input_tokens", 0)
+                         + usage.get("input_tokens", 0))
+                if total > 0:
+                    exceeds = data.get("exceeds_200k_tokens", False)
+                    return total, exceeds
     except (json.JSONDecodeError, OSError, TypeError):
-        return 0, False
+        pass
+
+    return 0, False
 
 
 def compute_remaining(session: dict, ttl: float) -> float:
