@@ -260,6 +260,12 @@ test("1M premium tier", cache_countdown.estimate_cost(1_000_000) == "$11.50")
 test("0 tokens returns empty", cache_countdown.estimate_cost(0) == "")
 test("exceeds_200k flag forces premium", cache_countdown.estimate_cost(100_000, exceeds_200k=True) == "$1.15")
 
+print("\n=== _cwd_to_project_slug ===")
+test("windows path slug", cache_countdown._cwd_to_project_slug(
+    "C:\\Users\\jpswi\\projects\\myapp") == "C--Users-jpswi-projects-myapp")
+test("unix path slug", cache_countdown._cwd_to_project_slug(
+    "/home/user/projects/myapp") == "home-user-projects-myapp")
+
 print("\n=== read_session_context ===")
 # Tier 1: statusline data file
 _sl_path = TEST_DIR / "statusline-data-ctx-test.json"
