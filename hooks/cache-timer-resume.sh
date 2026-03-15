@@ -45,7 +45,7 @@ if [ -f "$TIMER_FILE" ]; then
     EXISTING_CWD=$(grep -o '"cwd":"[^"]*"' "$TIMER_FILE" 2>/dev/null | cut -d'"' -f4 || true)
 fi
 # Prefer cwd from hook input, fall back to existing
-FINAL_CWD="${CWD:-$EXISTING_CWD}"
+FINAL_CWD="${CWD_JSON:-$EXISTING_CWD}"
 
 # Write timer file with stopped=false FIRST (before any PID discovery)
 printf '{"timestamp":"%s","session_id":"%s","project":"%s","host_pid":%d,"stopped":false,"cwd":"%s"}' \
