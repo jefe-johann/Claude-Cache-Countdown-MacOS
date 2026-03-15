@@ -232,7 +232,7 @@ def _parse_transcript_tokens(session_id: str, cwd: str) -> tuple[int, bool]:
     """Parse the transcript for token usage.
 
     Derives the exact transcript path from cwd + session_id.
-    Reads last 4KB, walks lines from end until it finds cache token data.
+    Reads last 256KB, walks lines from end until it finds cache token data.
 
     Returns (total_input_tokens, exceeds_200k).
     """
