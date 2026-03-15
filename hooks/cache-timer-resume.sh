@@ -79,8 +79,8 @@ if [ "$HOST_PID" -eq 0 ]; then
 
     # Re-write with PID if we found it
     if [ "$HOST_PID" -ne 0 ]; then
-        printf '{"timestamp":"%s","session_id":"%s","project":"%s","host_pid":%d,"stopped":false}' \
-            "$TIMESTAMP" "$SESSION_ID" "$PROJECT" "$HOST_PID" > "$TIMER_FILE"
+        printf '{"timestamp":"%s","session_id":"%s","project":"%s","host_pid":%d,"stopped":false,"cwd":"%s"}' \
+            "$TIMESTAMP" "$SESSION_ID" "$PROJECT" "$HOST_PID" "$FINAL_CWD" > "$TIMER_FILE"
     fi
 fi
 
