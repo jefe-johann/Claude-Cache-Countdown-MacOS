@@ -266,7 +266,9 @@ test("windows path slug", cache_countdown._cwd_to_project_slug(
 test("windows path with spaces", cache_countdown._cwd_to_project_slug(
     "C:\\Users\\jpswi\\personal projects\\claude-cache-countdown") == "C--Users-jpswi-personal-projects-claude-cache-countdown")
 test("unix path slug", cache_countdown._cwd_to_project_slug(
-    "/home/user/projects/myapp") == "home-user-projects-myapp")
+    "/home/user/projects/myapp") == "-home-user-projects-myapp")
+test("WSL path slug", cache_countdown._cwd_to_project_slug(
+    "/mnt/c/Users/jpswi/personal projects/agentManager") == "-mnt-c-Users-jpswi-personal-projects-agentManager")
 
 print("\n=== read_session_context ===")
 # Tier 1: statusline data file
