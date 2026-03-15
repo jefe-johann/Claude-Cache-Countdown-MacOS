@@ -230,10 +230,16 @@ def _parse_transcript_tokens(session_id: str) -> tuple[int, bool]:
     # The transcript could be in any project slug dir
     for transcript in projects_dir.glob(f"*/{session_id}.jsonl"):
         try:
-            # Read last 20 lines efficiently
-            with open(transcript, "r", encoding="utf-8") as f:
-                lines = f.readlines()
-            for line in reversed(lines[-20:]):
+            # Read from the end, line by line, until we find token usage
+            with open(transcript, "rb") as f:
+                f.seek(0, 2)  # seek to end
+                size = f.tell()
+                # Read last 32KB (enough for several entries)
+                chunk_size = min(size, 32768)
+                f.seek(size - chunk_size)
+                chunk = f.read().decode("utf-8", errors="replace")
+            lines = chunk.splitlines()
+            for line in reversed(lines):
                 if "cache_read_input_tokens" not in line:
                     continue
                 entry = json.loads(line)
