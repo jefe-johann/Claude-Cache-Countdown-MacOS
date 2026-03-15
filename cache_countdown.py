@@ -354,13 +354,22 @@ class AlertManager:
 # Display backends
 # ---------------------------------------------------------------------------
 
+def _format_session_line(s: dict) -> str:
+    """Format a session entry for display, including cost if present."""
+    line = f"{s['icon']} {s['countdown']} | {s['project']}"
+    cost = s.get("cost")
+    if cost:
+        line += f" ({cost})"
+    return line
+
+
 class StdoutDisplay:
     """Print countdown to stdout. Useful for piping into other tools."""
 
     def update(self, sessions_data: list[dict]):
         lines = []
         for s in sessions_data:
-            lines.append(f"{s['icon']} {s['countdown']} | {s['project']}")
+            lines.append(_format_session_line(s))
         output = "\n".join(lines) if lines else "(no active sessions)"
         print(f"\033[2J\033[H{output}", end="", flush=True)
 
