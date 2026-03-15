@@ -807,10 +807,12 @@ def main():
             alerts.check(sid, s["project"], stopped, remaining, was_known)
 
         # Remove stale COLD sessions (expired longer than cold_ttl)
-        # and clean up their timer files
+        # and clean up their timer files.
+        # Only clean up sessions that are actually COLD (stopped + expired).
+        # HOT/active sessions have old timestamps but are not expiring.
         active_data = []
         for s in sessions_data:
-            if s["remaining"] < -cold_ttl:
+            if s["countdown"] == "COLD" and s["remaining"] < -cold_ttl:
                 known.discard(s["session_id"])
                 cost_cache.pop(s["session_id"], None)
                 # Find and remove the timer file
