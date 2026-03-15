@@ -28,8 +28,9 @@ mkdir -p "$STATE_DIR"
 TIMER_FILE="$STATE_DIR/cache-timer-${SESSION_ID}.json"
 TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")
 
-# Read existing host_pid if file exists, preserve it
+# Read existing fields if file exists, preserve them
 HOST_PID=0
+EXISTING_CWD=""
 if [ -f "$TIMER_FILE" ]; then
     existing_pid=$(grep -o '"host_pid":[0-9]*' "$TIMER_FILE" 2>/dev/null | grep -o '[0-9]*' || true)
     if [ -n "$existing_pid" ]; then
@@ -39,11 +40,14 @@ if [ -f "$TIMER_FILE" ]; then
     if [ -n "$existing_project" ]; then
         PROJECT=$existing_project
     fi
+    EXISTING_CWD=$(grep -o '"cwd":"[^"]*"' "$TIMER_FILE" 2>/dev/null | cut -d'"' -f4 || true)
 fi
+# Prefer cwd from hook input, fall back to existing
+FINAL_CWD="${CWD:-$EXISTING_CWD}"
 
 # Write timer file with stopped=false FIRST (before any PID discovery)
-printf '{"timestamp":"%s","session_id":"%s","project":"%s","host_pid":%d,"stopped":false}' \
-    "$TIMESTAMP" "$SESSION_ID" "$PROJECT" "$HOST_PID" > "$TIMER_FILE"
+printf '{"timestamp":"%s","session_id":"%s","project":"%s","host_pid":%d,"stopped":false,"cwd":"%s"}' \
+    "$TIMESTAMP" "$SESSION_ID" "$PROJECT" "$HOST_PID" "$FINAL_CWD" > "$TIMER_FILE"
 
 # Best-effort: discover host PID if not already known
 if [ "$HOST_PID" -eq 0 ]; then
