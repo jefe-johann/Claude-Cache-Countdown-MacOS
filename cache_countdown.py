@@ -618,14 +618,17 @@ def main():
 
             was_known = sid in known
 
-            sessions_data.append({
+            entry = {
                 "session_id": sid,
                 "project": s["project"],
                 "host_pid": pid,
                 "remaining": remaining,
                 "countdown": countdown,
                 "icon": icon,
-            })
+            }
+            if context_k > 0 and stopped is True and remaining > 0:
+                entry["cost"] = estimate_cost(context_k)
+            sessions_data.append(entry)
 
             if not was_known:
                 known.add(sid)
