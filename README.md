@@ -262,13 +262,18 @@ The Stop hook writes one JSON file per session to `~/.claude/state/cache-timer-{
   "timestamp": "2026-03-14T10:35:00.000Z",
   "session_id": "e861c4a2-5b5a-4eb3-99cd-e71c9e6b6983",
   "project": "myapp",
-  "host_pid": 12345
+  "host_pid": 12345,
+  "stopped": true
 }
 ```
 
-`timestamp` is when the agent stopped. The ticker calculates `remaining = 295 - (now - timestamp)`.
+- `timestamp`: when the state last changed
+- `stopped`: `true` = cache draining (show countdown), `false` = agent working (show HOT)
+- `host_pid`: PID of the terminal tab's process (optional, used for Windows Terminal tab titles)
 
-The UserPromptSubmit hook deletes this file when the user resumes. No file = no countdown.
+The ticker calculates `remaining = 295 - (now - timestamp)`.
+
+The UserPromptSubmit hook sets `stopped` to `false` when the user resumes. The Stop hook sets it back to `true` when the agent finishes. Stale files are cleaned up automatically after the cold TTL expires.
 
 ## Adapting to your environment
 
