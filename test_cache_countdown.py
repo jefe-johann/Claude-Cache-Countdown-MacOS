@@ -137,7 +137,11 @@ am_quiet.check("s1", "proj", True, 200, False)
 test("quiet mode: no alerts fired", len(am_quiet._fired.get("s1", set())) == 0)
 
 # Normal mode fires stop alert on first check
-am = cache_countdown.AlertManager(quiet=False)
+_two_alerts = [
+    {"at": "stop", "type": "bell", "count": 1, "label": "cache draining"},
+    {"at": 60,     "type": "bell", "count": 3, "label": "~1 min left"},
+]
+am = cache_countdown.AlertManager(alerts=_two_alerts, quiet=False)
 # Monkey-patch bell to avoid actual terminal noise during tests
 _bell_count = 0
 _orig_bell = cache_countdown.bell
