@@ -148,7 +148,7 @@ cache_countdown.bell = _mock_bell
 
 am.check("s1", "proj", True, 200, False)
 test("stop alert fires on first stopped check", "stop" in am._fired["s1"])
-test("urgent not fired yet (200s remaining)", "urgent" not in am._fired["s1"])
+test("urgent not fired yet (200s remaining)", "60" not in am._fired["s1"])
 test("bell rang once for stop", _bell_count == 1)
 
 # Second check at same remaining: no repeat
@@ -158,7 +158,7 @@ test("stop alert does not repeat", _bell_count == prev_count)
 
 # Urgent fires at <=60s
 am.check("s1", "proj", True, 55, True)
-test("urgent alert fires at 55s", "urgent" in am._fired["s1"])
+test("urgent alert fires at 55s", "60" in am._fired["s1"])
 test("bell rang 3 more times for urgent", _bell_count == prev_count + 3)
 
 # Urgent does not repeat
@@ -174,7 +174,39 @@ test("alerts reset when session active", "s1" not in am._fired)
 am.check("s1", "proj", True, 250, True)
 test("stop alert fires again after reset", "stop" in am._fired["s1"])
 
+# Custom alert config
+custom_alerts = [
+    {"at": "stop", "type": "bell", "count": 2, "label": "paused"},
+    {"at": 120, "type": "bell", "count": 1, "label": "2 min warning"},
+    {"at": 30, "type": "bell", "count": 5, "label": "30 sec warning"},
+]
+am_custom = cache_countdown.AlertManager(alerts=custom_alerts, quiet=False)
+_bell_count = 0
+am_custom.check("c1", "proj", True, 200, False)
+test("custom: stop fires with count=2", _bell_count == 2)
+am_custom.check("c1", "proj", True, 100, True)
+test("custom: 120s alert fires at 100s", "120" in am_custom._fired["c1"])
+am_custom.check("c1", "proj", True, 25, True)
+test("custom: 30s alert fires at 25s", "30" in am_custom._fired["c1"])
+
+# describe() returns readable descriptions
+descs = am_custom.describe()
+test("describe returns 3 lines", len(descs) == 3)
+test("describe mentions 'on agent stop'", "on agent stop" in descs[0])
+test("describe mentions '120s remaining'", "120s remaining" in descs[1])
+
 cache_countdown.bell = _orig_bell
+
+print("\n=== config ===")
+import tempfile as _tempfile
+_cfg_path = Path(_tempfile.mktemp(suffix=".json"))
+cache_countdown.init_config(_cfg_path)
+test("init_config creates file", _cfg_path.is_file())
+_cfg = cache_countdown.load_config(_cfg_path)
+test("config has alerts key", "alerts" in _cfg)
+test("config has 2 default alerts", len(_cfg["alerts"]) == 2)
+_cfg_path.unlink()
+test("load_config returns {} for missing file", cache_countdown.load_config(Path("/nonexistent/path.json")) == {})
 
 # --- Cleanup ---
 shutil.rmtree(TEST_DIR, ignore_errors=True)
