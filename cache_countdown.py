@@ -282,7 +282,9 @@ class AlertManager:
                 when = "on agent stop"
             else:
                 when = f"at {trigger}s remaining"
-            if atype == "bell":
+            if atype == "countdown":
+                how = "bell every second"
+            elif atype == "bell":
                 count = a.get("count", 1)
                 how = f"{count}x bell"
             elif atype == "sound":
