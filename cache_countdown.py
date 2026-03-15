@@ -802,7 +802,7 @@ def main():
             # Cost: compute once when session first stops, cache the result
             if stopped is True:
                 if sid not in cost_cache:
-                    ctx_tokens, exceeds_200k = read_session_context(sid)
+                    ctx_tokens, exceeds_200k = read_session_context(sid, s.get("cwd", ""))
                     cost_cache[sid] = estimate_cost(ctx_tokens, exceeds_200k)
                 if cost_cache.get(sid):
                     entry["cost"] = cost_cache[sid]
