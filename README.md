@@ -20,11 +20,12 @@ We couldn't find anything else that does this. Prompt caching is well-documented
 ## What it does
 
 - Shows a live countdown when your agent stops and the cache is draining
-- **Audible alerts**: bell on agent stop, urgent alert at ~1 minute remaining
+- Shows **cost at risk** per session (auto-detected from statusline data or transcript)
+- **Escalating audible alerts**: bell on stop, triple bell at 1 min, 5x bell at 30s, per-second countdown for final 10s
 - Customizable alert thresholds and sound files via config
-- Disappears when you send a new message (cache is refreshing again)
+- Switches to HOT when you send a new message (cache is refreshing)
 - Tracks multiple Claude Code sessions simultaneously
-- Cleans up automatically when sessions end
+- Auto-hides stale sessions after configurable cold TTL
 - Supports multiple display backends (terminal titles, tmux, stdout)
 - Zero dependencies (Python stdlib only)
 
