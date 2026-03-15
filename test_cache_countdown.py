@@ -279,7 +279,7 @@ print("\n=== _format_session_line ===")
 test("basic format", cache_countdown._format_session_line(
     {"icon": "X", "countdown": "1:00", "project": "app"}) == "X 1:00 app")
 test("format with cost", cache_countdown._format_session_line(
-    {"icon": "X", "countdown": "1:00", "project": "app", "cost": "$5.75"}) == "X 1:00 app $5.75")
+    {"icon": "X", "countdown": "1:00", "project": "app", "cost": "$5.75"}) == "X 1:00 $5.75 app")
 test("format without cost key", cache_countdown._format_session_line(
     {"icon": "X", "countdown": "HOT", "project": "app"}) == "X HOT app")
 
