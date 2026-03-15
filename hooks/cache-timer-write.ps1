@@ -36,7 +36,7 @@ if (Test-Path $cacheTimerPath) {
     }
 }
 
-# Discover project name if not already known
+# Discover project name and store cwd
 if (-not $timerData["project"]) {
     if ($data.cwd) {
         $timerData["project"] = Split-Path -Leaf $data.cwd
@@ -45,6 +45,9 @@ if (-not $timerData["project"]) {
     } else {
         $timerData["project"] = "unknown"
     }
+}
+if ($data.cwd) {
+    $timerData["cwd"] = $data.cwd
 }
 
 # Mark as stopped - timestamp is NOW (when the cache starts draining)
