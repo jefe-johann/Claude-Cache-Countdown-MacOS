@@ -429,7 +429,7 @@ class WindowsTerminalDisplay:
             pid = s.get("host_pid", 0)
             if pid <= 0:
                 continue
-            title = f"{s['icon']} {s['countdown']} | {s['project']}"
+            title = _format_session_line(s)
             updates.append((pid, title))
         self._set_titles(updates)
 
