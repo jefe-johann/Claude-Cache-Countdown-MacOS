@@ -195,6 +195,40 @@ test("describe returns 3 lines", len(descs) == 3)
 test("describe mentions 'on agent stop'", "on agent stop" in descs[0])
 test("describe mentions '120s remaining'", "120s remaining" in descs[1])
 
+# Countdown alert type: bells every second
+countdown_alerts = [
+    {"at": 5, "type": "countdown"},
+]
+am_cd = cache_countdown.AlertManager(alerts=countdown_alerts, quiet=False)
+_bell_count = 0
+# Above threshold: no bell
+am_cd.check("cd1", "proj", True, 8, False)
+test("countdown: no bell above threshold", _bell_count == 0)
+# At 4.9s (int = 4): first countdown bell
+am_cd.check("cd1", "proj", True, 4.9, True)
+test("countdown: bell at 4s", _bell_count == 1)
+test("countdown: key countdown:4 fired", "countdown:4" in am_cd._fired["cd1"])
+# Same second: no repeat
+am_cd.check("cd1", "proj", True, 4.1, True)
+test("countdown: no repeat same second", _bell_count == 1)
+# Next second (3.5 -> int 3)
+am_cd.check("cd1", "proj", True, 3.5, True)
+test("countdown: bell at 3s", _bell_count == 2)
+# Jump to 1s
+am_cd.check("cd1", "proj", True, 1.2, True)
+test("countdown: bell at 1s", _bell_count == 3)
+# At 0 or below: no more bells (remaining <= 0 guard)
+am_cd.check("cd1", "proj", True, 0, True)
+test("countdown: no bell at 0", _bell_count == 3)
+# Reset and re-fire
+am_cd.check("cd1", "proj", False, 0, True)
+am_cd.check("cd1", "proj", True, 4.5, True)
+test("countdown: fires again after reset", _bell_count == 4)
+
+# Describe handles countdown type
+cd_descs = am_cd.describe()
+test("countdown describe says 'bell every second'", "bell every second" in cd_descs[0])
+
 cache_countdown.bell = _orig_bell
 
 print("\n=== config ===")
