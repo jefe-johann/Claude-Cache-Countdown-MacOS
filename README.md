@@ -101,26 +101,27 @@ The ticker auto-detects your platform and picks the right display backend.
 ## How it works
 
 ```
-Claude Code session is working...     (no timer file, nothing to show)
+Claude Code session is working...     (timer file has stopped=false, shows 🔥 HOT)
     |
     v
-Agent stops
+Agent stops                           (🔔 bell alert)
     |
     v
-Stop hook --------> creates cache-timer-{session_id}.json
-    |                    { "timestamp": "...", "project": "myapp", "host_pid": 12345 }
+Stop hook --------> sets stopped=true, timestamp=now
+    |
     v
 Ticker ------------> reads timer files every second, shows countdown
     |
     |                "🟢 4:32 | myapp"  -->  "🟡 2:15 | myapp"  -->  "🔴 0:45 | myapp"  -->  "❄️ COLD"
+    |                                                                  (🚨 urgent alert at ~1 min)
     v
 User sends new message
     |
     v
-Resume hook ------> deletes the timer file, countdown disappears
+Resume hook ------> sets stopped=false, countdown switches to 🔥 HOT
 ```
 
-While the agent is working, every API call resets the cache. The TTL is always full. There's nothing to count down. The countdown only starts when the agent stops and the cache begins draining. **The appearance of the countdown IS the alert.** When you send a new message, the timer file is deleted because the cache is being refreshed again.
+While the agent is working, every API call resets the cache. The TTL is always full. There's nothing to count down. The countdown only starts when the agent stops and the cache begins draining. Alerts fire at configurable thresholds. Stale COLD sessions auto-hide after 10 minutes.
 
 ## Visual states
 
