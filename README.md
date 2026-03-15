@@ -227,6 +227,30 @@ Sound playback is cross-platform: Windows (SoundPlayer/.wav, mpv/ffplay for othe
 --cold-ttl 600  Seconds to keep showing COLD sessions before auto-hiding (default: 600 = 10min)
 ```
 
+### Cost at risk
+
+Use `--context` to see how much money is at stake while the cache is draining:
+
+```bash
+python cache_countdown.py --context 500
+```
+
+This shows the cost delta (cache miss minus cache hit) in the tab title and startup banner:
+
+```
+Context: ~500K tokens ($5.75 at risk per cache miss)
+```
+
+The cost appears next to the countdown while draining: `🔴 0:45 | myapp ($5.75)`
+
+You can also set this in the config file: `"context": 500`
+
+### Stale session cleanup
+
+COLD sessions auto-hide after 10 minutes (configurable via `--cold-ttl`). Their timer files are cleaned up automatically so you don't accumulate clutter from finished sessions.
+
+---
+
 The default TTL is 295 seconds (4:55) rather than 300 (5:00). The timer starts from when we detect the stop event, not from the last API call. The 5-second buffer means you'll never see "0:01" and think you have time when the cache has already expired.
 
 ## Timer file format
