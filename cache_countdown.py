@@ -224,7 +224,10 @@ class AlertManager:
                 threading.Thread(target=play_sound, args=(self._alert_sound,), daemon=True).start()
             else:
                 bell(1)
-            print(f"  \U0001f514 {project}: cache is draining")
+            try:
+                print(f"  \U0001f514 {project}: cache is draining")
+            except UnicodeEncodeError:
+                print(f"  [!] {project}: cache is draining")
 
         # Alert 2: ~1 minute remaining (urgent - triple bell or sound)
         if "urgent" not in fired and remaining <= 60:
