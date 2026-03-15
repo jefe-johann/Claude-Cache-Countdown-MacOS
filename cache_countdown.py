@@ -235,14 +235,37 @@ def play_sound(path: str):
 
 
 class AlertManager:
-    """Tracks per-session alert state and fires alerts at thresholds."""
+    """Tracks per-session alert state and fires alerts at configurable thresholds."""
 
-    def __init__(self, alert_sound=None, urgent_sound=None, quiet=False):
-        # Per-session tracking: session_id -> set of fired alert names
+    def __init__(self, alerts=None, quiet=False):
+        # Per-session tracking: session_id -> set of fired alert keys
         self._fired: dict[str, set[str]] = {}
-        self._alert_sound = alert_sound   # sound file for stop alert
-        self._urgent_sound = urgent_sound  # sound file for urgent (1min) alert
+        self._alerts = alerts if alerts is not None else DEFAULT_ALERTS
         self._quiet = quiet
+
+    def describe(self) -> list[str]:
+        """Return human-readable descriptions of configured alerts."""
+        lines = []
+        for a in self._alerts:
+            trigger = a["at"]
+            atype = a.get("type", "bell")
+            label = a.get("label", "")
+            if trigger == "stop":
+                when = "on agent stop"
+            else:
+                when = f"at {trigger}s remaining"
+            if atype == "bell":
+                count = a.get("count", 1)
+                how = f"{count}x bell"
+            elif atype == "sound":
+                how = f"sound: {a.get('sound', '?')}"
+            else:
+                how = atype
+            desc = f"  {how} {when}"
+            if label:
+                desc += f" ({label})"
+            lines.append(desc)
+        return lines
 
     def reset(self, session_id: str):
         """Reset alerts for a session (e.g., when it becomes active again)."""
@@ -250,48 +273,59 @@ class AlertManager:
 
     def check(self, session_id: str, project: str, stopped: bool,
               remaining: float, was_known: bool):
-        """Check alert conditions and fire if needed.
-
-        Args:
-            session_id: Session identifier
-            project: Project name for log messages
-            stopped: Whether the session is stopped (cache draining)
-            remaining: Seconds remaining on cache
-            was_known: Whether this session was already being tracked
-        """
+        """Check alert conditions and fire if needed."""
         if self._quiet:
             return
 
         if stopped is not True:
-            # Session is active or unknown, reset alert state
             self.reset(session_id)
             return
 
         fired = self._fired.setdefault(session_id, set())
 
-        # Alert 1: session just stopped (minimal - single bell)
-        if "stop" not in fired:
-            fired.add("stop")
-            if self._alert_sound:
-                threading.Thread(target=play_sound, args=(self._alert_sound,), daemon=True).start()
-            else:
-                bell(1)
-            try:
-                print(f"  \U0001f514 {project}: cache is draining")
-            except UnicodeEncodeError:
-                print(f"  [!] {project}: cache is draining")
+        for a in self._alerts:
+            trigger = a["at"]
+            # Build a unique key for this alert rule
+            key = f"{trigger}"
 
-        # Alert 2: ~1 minute remaining (urgent - triple bell or sound)
-        if "urgent" not in fired and remaining <= 60:
-            fired.add("urgent")
-            if self._urgent_sound:
-                threading.Thread(target=play_sound, args=(self._urgent_sound,), daemon=True).start()
+            if key in fired:
+                continue
+
+            # Check if this alert should fire
+            should_fire = False
+            if trigger == "stop":
+                should_fire = True  # fires on first check after stop
+            elif isinstance(trigger, (int, float)) and remaining <= trigger:
+                should_fire = True
+
+            if not should_fire:
+                continue
+
+            fired.add(key)
+            atype = a.get("type", "bell")
+            label = a.get("label", "")
+
+            # Fire the alert
+            if atype == "sound":
+                sound_path = a.get("sound", "")
+                if sound_path:
+                    threading.Thread(target=play_sound, args=(sound_path,), daemon=True).start()
             else:
-                bell(3, spacing=0.2)
+                count = a.get("count", 1)
+                bell(count, spacing=0.2)
+
+            # Print notification
+            msg = f"{project}: {label}" if label else f"{project}: alert"
             try:
-                print(f"  \U0001f6a8 {project}: ~{int(remaining)}s remaining!")
+                if trigger == "stop":
+                    print(f"  \U0001f514 {msg}")
+                else:
+                    print(f"  \U0001f6a8 {msg}")
             except UnicodeEncodeError:
-                print(f"  [!!!] {project}: ~{int(remaining)}s remaining!")
+                if trigger == "stop":
+                    print(f"  [!] {msg}")
+                else:
+                    print(f"  [!!!] {msg}")
 
 
 # ---------------------------------------------------------------------------
