@@ -21,9 +21,9 @@ Usage:
     python cache_countdown.py --ttl 300            # 5-minute TTL (default)
     python cache_countdown.py --ttl 3600           # 1-hour TTL
     python cache_countdown.py --once               # single update, then exit
-    python cache_countdown.py --alert-sound ding.wav           # custom stop alert
-    python cache_countdown.py --urgent-sound alarm.wav         # custom 1-min alert
     python cache_countdown.py --quiet                          # no audible alerts
+    python cache_countdown.py --config alerts.json             # custom config file
+    python cache_countdown.py --init-config                    # generate starter config
 """
 import json
 import os
