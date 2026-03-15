@@ -724,8 +724,10 @@ def main():
                 "countdown": countdown,
                 "icon": icon,
             }
-            if context_k > 0:
-                entry["cost"] = estimate_cost(context_k)
+            ctx_tokens, exceeds_200k = read_session_context(sid)
+            cost = estimate_cost(ctx_tokens, exceeds_200k)
+            if cost:
+                entry["cost"] = cost
             sessions_data.append(entry)
 
             if not was_known:
