@@ -466,6 +466,8 @@ def main():
                 icon = "\u2753"  # question mark - unknown
                 countdown = "..."
 
+            was_known = sid in known
+
             sessions_data.append({
                 "session_id": sid,
                 "project": s["project"],
@@ -475,10 +477,12 @@ def main():
                 "icon": icon,
             })
 
-            if sid not in known:
+            if not was_known:
                 known.add(sid)
                 state = {True: "STOPPED", False: "active", None: "unknown"}[stopped]
                 print(f"  Tracking: {s['project']} (PID={pid}, {state})")
+
+            alerts.check(sid, s["project"], stopped, remaining, was_known)
 
         # Sort by remaining time ascending (most urgent first)
         sessions_data.sort(key=lambda x: x["remaining"])
