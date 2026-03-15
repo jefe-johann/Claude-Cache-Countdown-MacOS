@@ -172,6 +172,28 @@ def get_icon(remaining: float, ttl: float) -> str:
     return "\U0001f534"  # red
 
 
+def estimate_cost(context_ktokens: int) -> str:
+    """Estimate the cost of a cache miss vs hit for a given context size.
+
+    Returns a short string like '$5.75' representing how much money you lose
+    if the cache expires and has to be re-written.
+    """
+    tokens = context_ktokens * 1000
+    # Opus 4.6 pricing tiers
+    if tokens <= 200_000:
+        cache_read_per_mtok = 0.50
+        cache_write_per_mtok = 6.25
+    else:
+        cache_read_per_mtok = 1.00
+        cache_write_per_mtok = 12.50
+
+    mtokens = tokens / 1_000_000
+    hit_cost = mtokens * cache_read_per_mtok
+    miss_cost = mtokens * cache_write_per_mtok
+    delta = miss_cost - hit_cost
+    return f"${delta:.2f}"
+
+
 def compute_remaining(session: dict, ttl: float) -> float:
     """Compute seconds remaining for a session."""
     now = datetime.now(timezone.utc)
