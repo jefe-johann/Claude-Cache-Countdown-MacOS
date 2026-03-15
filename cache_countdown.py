@@ -218,22 +218,49 @@ def estimate_cost(context_tokens: int, exceeds_200k: bool = False) -> str:
     return f"${delta:.2f}"
 
 
-def read_session_context(session_id: str, timer_data: dict = None) -> tuple[int, bool]:
-    """Read context size for a session using a three-tier fallback.
+def _parse_transcript_tokens(session_id: str) -> tuple[int, bool]:
+    """Parse the last few lines of a session transcript for token usage.
 
-    Tier 0: context_tokens embedded in timer file by stop hook
-    Tier 1: statusline-data-{session_id}.json (from statusline wrapper)
-    Tier 2: (transcript parsing done in stop hook, result in tier 0)
+    Scans ~/.claude/projects/*/session_id.jsonl for the last entry
+    containing cache_read_input_tokens.
+
+    Returns (total_input_tokens, exceeds_200k).
+    """
+    projects_dir = Path.home() / ".claude" / "projects"
+    if not projects_dir.is_dir():
+        return 0, False
+    # The transcript could be in any project slug dir
+    for transcript in projects_dir.glob(f"*/{session_id}.jsonl"):
+        try:
+            # Read last 20 lines efficiently
+            with open(transcript, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+            for line in reversed(lines[-20:]):
+                if "cache_read_input_tokens" not in line:
+                    continue
+                entry = json.loads(line)
+                usage = entry.get("message", {}).get("usage")
+                if not usage:
+                    continue
+                total = (usage.get("input_tokens", 0)
+                         + usage.get("cache_creation_input_tokens", 0)
+                         + usage.get("cache_read_input_tokens", 0))
+                exceeds = total > 200_000
+                return total, exceeds
+        except (json.JSONDecodeError, OSError, TypeError):
+            continue
+    return 0, False
+
+
+def read_session_context(session_id: str) -> tuple[int, bool]:
+    """Read context size for a session using a two-tier fallback.
+
+    Tier 1: statusline-data-{session_id}.json (from statusline wrapper, live)
+    Tier 2: transcript file parsing (last entry with token usage)
 
     Returns (total_input_tokens, exceeds_200k).
     Falls back to (0, False) if no data is available.
     """
-    # Tier 0: stop hook already parsed transcript/statusline and embedded it
-    if timer_data:
-        ctx = timer_data.get("context_tokens", 0)
-        if ctx and ctx > 0:
-            return ctx, timer_data.get("exceeds_200k", False)
-
     # Tier 1: statusline data file
     data_file = STATE_DIR / f"statusline-data-{session_id}.json"
     try:
@@ -251,7 +278,8 @@ def read_session_context(session_id: str, timer_data: dict = None) -> tuple[int,
     except (json.JSONDecodeError, OSError, TypeError):
         pass
 
-    return 0, False
+    # Tier 2: transcript parsing
+    return _parse_transcript_tokens(session_id)
 
 
 def compute_remaining(session: dict, ttl: float) -> float:
