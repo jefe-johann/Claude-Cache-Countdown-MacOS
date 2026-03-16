@@ -43,7 +43,8 @@ function Write-Failure {
 
 function Write-Debug {
     param([string]$Message)
-    if (-not $env:CACHE_TIMER_DEBUG) { return }
+    # TEMP: force debug on until PID fallback is verified
+    # if (-not $env:CACHE_TIMER_DEBUG) { return }
     $debugLog = Join-Path $stateDir "cache-timer-debug.log"
     try { Add-Content $debugLog "$(Get-Date -Format 'HH:mm:ss') [RESUME] $Message" } catch {}
 }
@@ -138,7 +139,6 @@ $needsWalk = (-not $cachedPid -or $cachedPid -eq 0 -or -not $pidAlive)
 
 if ($needsWalk) {
     $walkResult = 0
-    $claudeFallback = 0
     $walkTrace = @()
     try {
         $p = [System.Diagnostics.Process]::GetCurrentProcess()
@@ -153,16 +153,10 @@ if ($needsWalk) {
             try {
                 $pp = [System.Diagnostics.Process]::GetProcessById($ppid)
             } catch {
-                # Parent is dead. If we found claude already, that's our fallback.
                 $walkTrace += "-> $ppid(DEAD)"
                 break
             }
             $walkTrace += "-> $($pp.Id)($($pp.ProcessName))"
-            # Remember claude PID as fallback (it shares the tab's console)
-            if ($pp.ProcessName -eq "claude") {
-                $claudeFallback = $pp.Id
-                $walkTrace += "CLAUDE=$($pp.Id)"
-            }
             if ($pp.ProcessName -eq "WindowsTerminal") {
                 $walkResult = $p.Id
                 $walkTrace += "FOUND_WT=$($p.Id)"
@@ -175,18 +169,65 @@ if ($needsWalk) {
         Write-Failure "pid-walk" "PID walk failed for sid=$sid. Trace: $($walkTrace -join ' '). Error: $_"
     }
 
-    # Prefer WT child, fall back to claude PID (works for orphaned sessions)
-    $finalPid = if ($walkResult -ne 0) { $walkResult } elseif ($claudeFallback -ne 0) { $claudeFallback } else { 0 }
-    $walkTrace += "final=$finalPid"
+    # If upward walk failed (orphaned process), try to find the WT-child pwsh
+    # by matching: this hook IS running in the tab's console, so our own process
+    # can set the title. But we need a persistent PID for the ticker.
+    # Find the OpenConsole.exe that owns this hook's console via console session.
+    if ($walkResult -eq 0) {
+        try {
+            # This hook runs inside the tab's console. Use our own PID to call
+            # SetConsoleTitleW directly -- it works because we share the console.
+            # For the ticker: find which WT-child process shares our console.
+            $k = Add-Type -MemberDefinition @'
+[DllImport("kernel32.dll")] public static extern uint GetConsoleProcessList(uint[] list, uint count);
+'@ -Name ConsoleHelper -PassThru
+            $list = New-Object uint[] 64
+            $count = [ConsoleHelper]::GetConsoleProcessList($list, 64)
+            $consolePids = $list[0..($count-1)]
+            $walkTrace += "console_pids=[$($consolePids -join ',')]"
+            # Find the pwsh or OpenConsole in this console's process list
+            # that is a child of WindowsTerminal
+            $wt = Get-Process WindowsTerminal -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($wt) {
+                foreach ($cpid in $consolePids) {
+                    try {
+                        $cproc = Get-CimInstance Win32_Process -Filter "ProcessId=$cpid" -ErrorAction Stop
+                        if ($cproc.ParentProcessId -eq $wt.Id -and $cproc.Name -eq "pwsh.exe") {
+                            $walkResult = $cpid
+                            $walkTrace += "FOUND_CONSOLE_PWSH=$cpid"
+                            break
+                        }
+                    } catch {}
+                }
+                # If no pwsh found, try OpenConsole
+                if ($walkResult -eq 0) {
+                    foreach ($cpid in $consolePids) {
+                        try {
+                            $cproc = Get-CimInstance Win32_Process -Filter "ProcessId=$cpid" -ErrorAction Stop
+                            if ($cproc.ParentProcessId -eq $wt.Id -and $cproc.Name -eq "OpenConsole.exe") {
+                                $walkResult = $cpid
+                                $walkTrace += "FOUND_OPENCONSOLE=$cpid"
+                                break
+                            }
+                        } catch {}
+                    }
+                }
+            }
+        } catch {
+            $walkTrace += "CONSOLE_FALLBACK_ERROR: $_"
+            Write-Failure "console-fallback" "Console process list fallback failed for sid=$sid. Error: $_"
+        }
+    }
 
-    Write-Debug "sid=$sid cachedPid=$cachedPid pidAlive=$pidAlive walk=[$($walkTrace -join ' ')] result=$finalPid"
+    $walkTrace += "final=$walkResult"
+    Write-Debug "sid=$sid cachedPid=$cachedPid pidAlive=$pidAlive walk=[$($walkTrace -join ' ')] result=$walkResult"
 
-    if ($finalPid -ne 0) {
-        $ht["host_pid"] = $finalPid
+    if ($walkResult -ne 0) {
+        $ht["host_pid"] = $walkResult
         try {
             $ht | ConvertTo-Json -Compress | Set-Content $timerPath -Force
         } catch {
-            Write-Failure "write-pid" "Found PID $finalPid but failed to write: $_"
+            Write-Failure "write-pid" "Found PID $walkResult but failed to write: $_"
         }
     } else {
         Write-Failure "pid-walk-empty" "PID walk found nothing for sid=$sid. Trace: $($walkTrace -join ' '). Tab title will not update."
@@ -215,6 +256,16 @@ if ($myPid -and $myPid -ne 0) {
     } catch {
         Write-Failure "cleanup-list" "Failed listing timer files for cleanup: $_"
     }
+}
+
+# --- Set tab title directly (works even for orphaned sessions) ---
+# The hook IS running in the tab's console, so ANSI escape sequences work.
+try {
+    $project = $ht["project"]
+    if (-not $project) { $project = "unknown" }
+    [Console]::Write([char]27 + "]0;" + [char]0x1F525 + " HOT " + $project + [char]7)
+} catch {
+    Write-Failure "set-title" "Failed to set tab title for $sid : $_"
 }
 
 exit 0

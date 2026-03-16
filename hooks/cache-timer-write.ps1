@@ -134,7 +134,6 @@ $needsWalk = (-not $cachedPid -or $cachedPid -eq 0 -or -not $pidAlive)
 
 if ($needsWalk) {
     $walkResult = 0
-    $claudeFallback = 0
     $walkTrace = @()
     try {
         $p = [System.Diagnostics.Process]::GetCurrentProcess()
@@ -153,10 +152,6 @@ if ($needsWalk) {
                 break
             }
             $walkTrace += "-> $($pp.Id)($($pp.ProcessName))"
-            if ($pp.ProcessName -eq "claude") {
-                $claudeFallback = $pp.Id
-                $walkTrace += "CLAUDE=$($pp.Id)"
-            }
             if ($pp.ProcessName -eq "WindowsTerminal") {
                 $walkResult = $p.Id
                 $walkTrace += "FOUND_WT=$($p.Id)"
@@ -169,23 +164,72 @@ if ($needsWalk) {
         Write-Failure "pid-walk" "PID walk failed for sid=$sid. Trace: $($walkTrace -join ' '). Error: $_"
     }
 
-    $finalPid = if ($walkResult -ne 0) { $walkResult } elseif ($claudeFallback -ne 0) { $claudeFallback } else { 0 }
-    $walkTrace += "final=$finalPid"
+    # If upward walk failed (orphaned process), find the WT-child process
+    # that shares this hook's console session via GetConsoleProcessList
+    if ($walkResult -eq 0) {
+        try {
+            $k = Add-Type -MemberDefinition @'
+[DllImport("kernel32.dll")] public static extern uint GetConsoleProcessList(uint[] list, uint count);
+'@ -Name ConsoleHelperStop -PassThru
+            $list = New-Object uint[] 64
+            $count = [ConsoleHelperStop]::GetConsoleProcessList($list, 64)
+            $consolePids = $list[0..($count-1)]
+            $walkTrace += "console_pids=[$($consolePids -join ',')]"
+            $wt = Get-Process WindowsTerminal -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($wt) {
+                foreach ($cpid in $consolePids) {
+                    try {
+                        $cproc = Get-CimInstance Win32_Process -Filter "ProcessId=$cpid" -ErrorAction Stop
+                        if ($cproc.ParentProcessId -eq $wt.Id -and $cproc.Name -eq "pwsh.exe") {
+                            $walkResult = $cpid
+                            $walkTrace += "FOUND_CONSOLE_PWSH=$cpid"
+                            break
+                        }
+                    } catch {}
+                }
+                if ($walkResult -eq 0) {
+                    foreach ($cpid in $consolePids) {
+                        try {
+                            $cproc = Get-CimInstance Win32_Process -Filter "ProcessId=$cpid" -ErrorAction Stop
+                            if ($cproc.ParentProcessId -eq $wt.Id -and $cproc.Name -eq "OpenConsole.exe") {
+                                $walkResult = $cpid
+                                $walkTrace += "FOUND_OPENCONSOLE=$cpid"
+                                break
+                            }
+                        } catch {}
+                    }
+                }
+            }
+        } catch {
+            $walkTrace += "CONSOLE_FALLBACK_ERROR: $_"
+            Write-Failure "console-fallback" "Console process list fallback failed for sid=$sid. Error: $_"
+        }
+    }
 
-    Write-Debug "sid=$sid cachedPid=$cachedPid pidAlive=$pidAlive walk=[$($walkTrace -join ' ')] result=$finalPid"
+    $walkTrace += "final=$walkResult"
+    Write-Debug "sid=$sid cachedPid=$cachedPid pidAlive=$pidAlive walk=[$($walkTrace -join ' ')] result=$walkResult"
 
-    if ($finalPid -ne 0) {
-        $timerData["host_pid"] = $finalPid
+    if ($walkResult -ne 0) {
+        $timerData["host_pid"] = $walkResult
         try {
             $timerData | ConvertTo-Json -Compress | Set-Content $cacheTimerPath -Force
         } catch {
-            Write-Failure "write-pid" "Found PID $finalPid but failed to write: $_"
+            Write-Failure "write-pid" "Found PID $walkResult but failed to write: $_"
         }
     } else {
         Write-Failure "pid-walk-empty" "PID walk found nothing for sid=$sid. Trace: $($walkTrace -join ' '). Tab title will not update."
     }
 } else {
     Write-Debug "sid=$sid cachedPid=$cachedPid ALIVE(skip walk)"
+}
+
+# --- Set tab title directly (works even for orphaned sessions) ---
+try {
+    $project = $timerData["project"]
+    if (-not $project) { $project = "unknown" }
+    [Console]::Write([char]27 + "]0;" + [char]0x23F1 + " " + $project + [char]7)
+} catch {
+    Write-Failure "set-title" "Failed to set tab title for $sid : $_"
 }
 
 exit 0
