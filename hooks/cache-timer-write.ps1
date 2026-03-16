@@ -61,7 +61,12 @@ $timerData | ConvertTo-Json -Compress | Set-Content $cacheTimerPath -Force
 # Best-effort: discover host PID if not already known (child of WindowsTerminal)
 # This is expensive on first call (WMI cold start) and optional - only used for
 # Windows Terminal tab title display. If it times out, the timer file is already written.
-if (-not $timerData["host_pid"] -or $timerData["host_pid"] -eq 0) {
+$cachedPid = $timerData["host_pid"]
+$pidAlive = $false
+if ($cachedPid -and $cachedPid -ne 0) {
+    try { [System.Diagnostics.Process]::GetProcessById($cachedPid) | Out-Null; $pidAlive = $true } catch {}
+}
+if (-not $cachedPid -or $cachedPid -eq 0 -or -not $pidAlive) {
     try {
         $p = [System.Diagnostics.Process]::GetCurrentProcess()
         for ($i = 0; $i -lt 10; $i++) {
