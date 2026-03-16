@@ -791,7 +791,7 @@ def main():
                 "countdown": countdown,
                 "icon": icon,
             }
-            # Cost: compute on stop, keep showing while HOT.
+            # Cost: compute once per state, keep showing in all states.
             # Mark stale on resume so next stop recomputes with new context.
             if stopped is True:
                 if sid not in cost_cache or sid in cost_stale:
@@ -799,6 +799,9 @@ def main():
                     cost_cache[sid] = estimate_cost(ctx_tokens, exceeds_200k)
                     cost_stale.discard(sid)
             elif stopped is False:
+                if sid not in cost_cache:
+                    ctx_tokens, exceeds_200k = read_session_context(sid, s.get("cwd", ""))
+                    cost_cache[sid] = estimate_cost(ctx_tokens, exceeds_200k)
                 cost_stale.add(sid)
             if cost_cache.get(sid):
                 entry["cost"] = cost_cache[sid]
