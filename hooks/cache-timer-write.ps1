@@ -1,98 +1,42 @@
-# cache-timer-stop.ps1 - Stop hook
+# cache-timer-stop.ps1 - Stop hook for Claude Code (Windows / PowerShell 7)
 # Marks the cache timer file as "stopped" so the external ticker knows
 # the cache is now genuinely draining and should show the countdown.
 #
-# FAILURE POLICY: Nothing silent. Every error logs AND sends a toast notification.
+# Self-sufficient: discovers host PID independently so sessions WITHOUT
+# a status line wrapper still get tracked.
+#
+# Install: Add to ~/.claude/settings.json under hooks.Stop
 param()
 
-$ErrorActionPreference = "Stop"
+$ErrorActionPreference = "Continue"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
-$stateDir = Join-Path $env:USERPROFILE ".claude\state"
-$errorLog = Join-Path $stateDir "cache-timer-errors.log"
-
-function Write-Failure {
-    param([string]$Where, [string]$Message)
-    $line = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') [STOP] [$Where] $Message"
-    try { Add-Content $errorLog $line } catch {}
-    try {
-        [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
-        $template = @"
-<toast>
-  <visual><binding template='ToastGeneric'>
-    <text>Cache Timer Hook FAILED</text>
-    <text>[$Where] $Message</text>
-  </binding></visual>
-</toast>
-"@
-        $xml = New-Object Windows.Data.Xml.Dom.XmlDocument
-        $xml.LoadXml($template)
-        $toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
-        [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier("Claude Cache Timer").Show($toast)
-    } catch {
-        try {
-            Import-Module BurntToast -ErrorAction Stop
-            New-BurntToastNotification -Text "Cache Timer FAILED", "[$Where] $Message" -ErrorAction Stop
-        } catch {
-            [Console]::Beep(1000, 500)
-            [Console]::Error.WriteLine("CACHE-TIMER-STOP FAILED: [$Where] $Message")
-        }
-    }
-}
-
-function Write-Debug {
-    param([string]$Message)
-    if (-not $env:CACHE_TIMER_DEBUG) { return }
-    $debugLog = Join-Path $stateDir "cache-timer-debug.log"
-    try { Add-Content $debugLog "$(Get-Date -Format 'HH:mm:ss') [STOP] $Message" } catch {}
-}
-
-# --- Read hook input ---
-try {
-    $hookInput = [Console]::In.ReadToEnd()
-} catch {
-    Write-Failure "stdin" "Failed to read hook input: $_"
-    exit 1
-}
+$hookInput = [Console]::In.ReadToEnd()
 if ([string]::IsNullOrWhiteSpace($hookInput)) { exit 0 }
 
 try {
     $data = $hookInput | ConvertFrom-Json
-} catch {
-    Write-Failure "parse-input" "Failed to parse hook JSON: $_"
-    exit 1
-}
+} catch { exit 0 }
 
 $sid = $data.session_id
-if (-not $sid) {
-    Write-Failure "no-sid" "Hook input has no session_id. Input: $hookInput"
-    exit 1
-}
+if (-not $sid) { exit 0 }
 
-if (-not (Test-Path $stateDir)) {
-    try {
-        New-Item -ItemType Directory -Path $stateDir -Force | Out-Null
-    } catch {
-        Write-Failure "mkdir" "Failed to create state dir: $_"
-        exit 1
-    }
-}
-
+$stateDir = Join-Path $env:USERPROFILE ".claude\state"
+if (-not (Test-Path $stateDir)) { New-Item -ItemType Directory -Path $stateDir -Force | Out-Null }
 $cacheTimerPath = Join-Path $stateDir "cache-timer-$sid.json"
 
-# --- Read existing timer file ---
+# Read existing timer file if present
 $timerData = @{}
 if (Test-Path $cacheTimerPath) {
     try {
         $existing = Get-Content $cacheTimerPath -Raw | ConvertFrom-Json
         $existing.PSObject.Properties | ForEach-Object { $timerData[$_.Name] = $_.Value }
     } catch {
-        Write-Failure "read-timer" "Failed to read existing timer file $cacheTimerPath : $_"
         $timerData = @{}
     }
 }
 
-# --- Populate project and cwd ---
+# Discover project name and store cwd
 if (-not $timerData["project"]) {
     if ($data.cwd) {
         $timerData["project"] = Split-Path -Leaf $data.cwd
@@ -106,130 +50,33 @@ if ($data.cwd) {
     $timerData["cwd"] = $data.cwd
 }
 
-# --- Mark as stopped ---
+# Mark as stopped - timestamp is NOW (when the cache starts draining)
+# WRITE IMMEDIATELY before PID walk, which can cold-start WMI and timeout
 $timerData["stopped"] = $true
 $timerData["timestamp"] = (Get-Date -Format "o")
 $timerData["session_id"] = $sid
 
-try {
-    $timerData | ConvertTo-Json -Compress | Set-Content $cacheTimerPath -Force
-} catch {
-    Write-Failure "write-timer" "Failed to write timer file $cacheTimerPath : $_"
-    exit 1
-}
+$timerData | ConvertTo-Json -Compress | Set-Content $cacheTimerPath -Force
 
-# --- PID discovery: verify cached PID is alive, re-walk if not ---
-$cachedPid = $timerData["host_pid"]
-$pidAlive = $false
-if ($cachedPid -and $cachedPid -ne 0) {
-    try {
-        [System.Diagnostics.Process]::GetProcessById($cachedPid) | Out-Null
-        $pidAlive = $true
-    } catch {
-        $pidAlive = $false
-    }
-}
-
-$needsWalk = (-not $cachedPid -or $cachedPid -eq 0 -or -not $pidAlive)
-
-if ($needsWalk) {
-    $walkResult = 0
-    $walkTrace = @()
+# Best-effort: discover host PID if not already known (child of WindowsTerminal)
+# This is expensive on first call (WMI cold start) and optional - only used for
+# Windows Terminal tab title display. If it times out, the timer file is already written.
+if (-not $timerData["host_pid"] -or $timerData["host_pid"] -eq 0) {
     try {
         $p = [System.Diagnostics.Process]::GetCurrentProcess()
-        $walkTrace += "self=$($p.Id)($($p.ProcessName))"
         for ($i = 0; $i -lt 10; $i++) {
-            $wmiResult = Get-CimInstance Win32_Process -Filter "ProcessId=$($p.Id)" -ErrorAction Stop
-            $ppid = $wmiResult.ParentProcessId
-            if (-not $ppid -or $ppid -eq 0) {
-                $walkTrace += "-> ppid=null(end)"
-                break
-            }
-            try {
-                $pp = [System.Diagnostics.Process]::GetProcessById($ppid)
-            } catch {
-                $walkTrace += "-> $ppid(DEAD)"
-                break
-            }
-            $walkTrace += "-> $($pp.Id)($($pp.ProcessName))"
+            $ppid = (Get-CimInstance Win32_Process -Filter "ProcessId=$($p.Id)" -ErrorAction SilentlyContinue).ParentProcessId
+            if (-not $ppid) { break }
+            $pp = [System.Diagnostics.Process]::GetProcessById($ppid)
             if ($pp.ProcessName -eq "WindowsTerminal") {
-                $walkResult = $p.Id
-                $walkTrace += "FOUND_WT=$($p.Id)"
+                $timerData["host_pid"] = $p.Id
                 break
             }
             $p = $pp
         }
-    } catch {
-        $walkTrace += "ERROR: $_"
-        Write-Failure "pid-walk" "PID walk failed for sid=$sid. Trace: $($walkTrace -join ' '). Error: $_"
-    }
-
-    # If upward walk failed (orphaned process), find the WT-child process
-    # that shares this hook's console session via GetConsoleProcessList
-    if ($walkResult -eq 0) {
-        try {
-            $k = Add-Type -MemberDefinition @'
-[DllImport("kernel32.dll")] public static extern uint GetConsoleProcessList(uint[] list, uint count);
-'@ -Name ConsoleHelperStop -PassThru
-            $list = New-Object uint[] 64
-            $count = [ConsoleHelperStop]::GetConsoleProcessList($list, 64)
-            $consolePids = $list[0..($count-1)]
-            $walkTrace += "console_pids=[$($consolePids -join ',')]"
-            $wt = Get-Process WindowsTerminal -ErrorAction SilentlyContinue | Select-Object -First 1
-            if ($wt) {
-                foreach ($cpid in $consolePids) {
-                    try {
-                        $cproc = Get-CimInstance Win32_Process -Filter "ProcessId=$cpid" -ErrorAction Stop
-                        if ($cproc.ParentProcessId -eq $wt.Id -and $cproc.Name -eq "pwsh.exe") {
-                            $walkResult = $cpid
-                            $walkTrace += "FOUND_CONSOLE_PWSH=$cpid"
-                            break
-                        }
-                    } catch {}
-                }
-                if ($walkResult -eq 0) {
-                    foreach ($cpid in $consolePids) {
-                        try {
-                            $cproc = Get-CimInstance Win32_Process -Filter "ProcessId=$cpid" -ErrorAction Stop
-                            if ($cproc.ParentProcessId -eq $wt.Id -and $cproc.Name -eq "OpenConsole.exe") {
-                                $walkResult = $cpid
-                                $walkTrace += "FOUND_OPENCONSOLE=$cpid"
-                                break
-                            }
-                        } catch {}
-                    }
-                }
-            }
-        } catch {
-            $walkTrace += "CONSOLE_FALLBACK_ERROR: $_"
-            Write-Failure "console-fallback" "Console process list fallback failed for sid=$sid. Error: $_"
-        }
-    }
-
-    $walkTrace += "final=$walkResult"
-    Write-Debug "sid=$sid cachedPid=$cachedPid pidAlive=$pidAlive walk=[$($walkTrace -join ' ')] result=$walkResult"
-
-    if ($walkResult -ne 0) {
-        $timerData["host_pid"] = $walkResult
-        try {
-            $timerData | ConvertTo-Json -Compress | Set-Content $cacheTimerPath -Force
-        } catch {
-            Write-Failure "write-pid" "Found PID $walkResult but failed to write: $_"
-        }
-    } else {
-        Write-Failure "pid-walk-empty" "PID walk found nothing for sid=$sid. Trace: $($walkTrace -join ' '). Tab title will not update."
-    }
-} else {
-    Write-Debug "sid=$sid cachedPid=$cachedPid ALIVE(skip walk)"
-}
-
-# --- Set tab title directly (works even for orphaned sessions) ---
-try {
-    $project = $timerData["project"]
-    if (-not $project) { $project = "unknown" }
-    [Console]::Write([char]27 + "]0;" + [char]0x23F1 + " " + $project + [char]7)
-} catch {
-    Write-Failure "set-title" "Failed to set tab title for $sid : $_"
+        # Re-write with PID if we found it
+        $timerData | ConvertTo-Json -Compress | Set-Content $cacheTimerPath -Force
+    } catch {}
 }
 
 exit 0
