@@ -55,7 +55,12 @@ try {
 
     # Best-effort: discover host PID if not already known (child of WindowsTerminal)
     # Expensive on first call (WMI cold start), optional for tab title display only.
-    if (-not $ht["host_pid"] -or $ht["host_pid"] -eq 0) {
+    $cachedPid = $ht["host_pid"]
+    $pidAlive = $false
+    if ($cachedPid -and $cachedPid -ne 0) {
+        try { [System.Diagnostics.Process]::GetProcessById($cachedPid) | Out-Null; $pidAlive = $true } catch {}
+    }
+    if (-not $cachedPid -or $cachedPid -eq 0 -or -not $pidAlive) {
         try {
             $p = [System.Diagnostics.Process]::GetCurrentProcess()
             for ($i = 0; $i -lt 10; $i++) {
