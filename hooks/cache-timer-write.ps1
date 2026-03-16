@@ -133,6 +133,7 @@ $needsWalk = (-not $cachedPid -or $cachedPid -eq 0 -or -not $pidAlive)
 
 if ($needsWalk) {
     $walkResult = 0
+    $claudeFallback = 0
     $walkTrace = @()
     try {
         $p = [System.Diagnostics.Process]::GetCurrentProcess()
@@ -151,9 +152,13 @@ if ($needsWalk) {
                 break
             }
             $walkTrace += "-> $($pp.Id)($($pp.ProcessName))"
+            if ($pp.ProcessName -eq "claude") {
+                $claudeFallback = $pp.Id
+                $walkTrace += "CLAUDE=$($pp.Id)"
+            }
             if ($pp.ProcessName -eq "WindowsTerminal") {
                 $walkResult = $p.Id
-                $walkTrace += "FOUND=$($p.Id)"
+                $walkTrace += "FOUND_WT=$($p.Id)"
                 break
             }
             $p = $pp
@@ -163,17 +168,20 @@ if ($needsWalk) {
         Write-Failure "pid-walk" "PID walk failed for sid=$sid. Trace: $($walkTrace -join ' '). Error: $_"
     }
 
-    Write-Debug "sid=$sid cachedPid=$cachedPid pidAlive=$pidAlive walk=[$($walkTrace -join ' ')] result=$walkResult"
+    $finalPid = if ($walkResult -ne 0) { $walkResult } elseif ($claudeFallback -ne 0) { $claudeFallback } else { 0 }
+    $walkTrace += "final=$finalPid"
 
-    if ($walkResult -ne 0) {
-        $timerData["host_pid"] = $walkResult
+    Write-Debug "sid=$sid cachedPid=$cachedPid pidAlive=$pidAlive walk=[$($walkTrace -join ' ')] result=$finalPid"
+
+    if ($finalPid -ne 0) {
+        $timerData["host_pid"] = $finalPid
         try {
             $timerData | ConvertTo-Json -Compress | Set-Content $cacheTimerPath -Force
         } catch {
-            Write-Failure "write-pid" "Found PID $walkResult but failed to write: $_"
+            Write-Failure "write-pid" "Found PID $finalPid but failed to write: $_"
         }
     } else {
-        Write-Debug "sid=$sid WARNING: PID walk found nothing. Tab title will not update."
+        Write-Failure "pid-walk-empty" "PID walk found nothing for sid=$sid. Trace: $($walkTrace -join ' '). Tab title will not update."
     }
 } else {
     Write-Debug "sid=$sid cachedPid=$cachedPid ALIVE(skip walk)"
