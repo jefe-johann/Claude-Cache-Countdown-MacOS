@@ -788,16 +788,13 @@ def main():
                 "countdown": countdown,
                 "icon": icon,
             }
-            # Cost: compute once when session first stops, keep showing when HOT
-            if stopped is True:
-                if sid not in cost_cache:
-                    ctx_tokens, exceeds_200k = read_session_context(sid, s.get("cwd", ""))
-                    cost_cache[sid] = estimate_cost(ctx_tokens, exceeds_200k)
-            elif stopped is False:
-                # HOT session: compute cost once if not already cached
-                if sid not in cost_cache:
-                    ctx_tokens, exceeds_200k = read_session_context(sid, s.get("cwd", ""))
-                    cost_cache[sid] = estimate_cost(ctx_tokens, exceeds_200k)
+            # Cost: compute on stop (fresh context size), keep showing when HOT
+            if stopped is True and sid not in cost_cache:
+                ctx_tokens, exceeds_200k = read_session_context(sid, s.get("cwd", ""))
+                cost_cache[sid] = estimate_cost(ctx_tokens, exceeds_200k)
+            elif stopped is False and sid not in cost_cache:
+                ctx_tokens, exceeds_200k = read_session_context(sid, s.get("cwd", ""))
+                cost_cache[sid] = estimate_cost(ctx_tokens, exceeds_200k)
             if cost_cache.get(sid):
                 entry["cost"] = cost_cache[sid]
             sessions_data.append(entry)
