@@ -377,7 +377,7 @@ def _cwd_to_project_slug(cwd: str) -> str:
 
     Claude Code stores transcripts at ~/.claude/projects/{slug}/{session}.jsonl
     where slug is the cwd with separators replaced by dashes and colon removed.
-    e.g. C:\\Users\\jpswi\\projects\\myapp -> C--Users-jpswi-projects-myapp
+    e.g. C:\\Users\\alice\\projects\\myapp -> C--Users-alice-projects-myapp
     """
     # Don't lstrip - Claude Code preserves leading dashes in slugs
     # (e.g. /mnt/c/... -> -mnt-c-..., /home/user/... -> -home-user-...)
