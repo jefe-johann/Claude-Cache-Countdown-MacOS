@@ -4,7 +4,7 @@
 #
 # Install: Add to ~/.claude/settings.json under hooks.Stop
 #
-# Works on macOS, Linux, and Windows (Git Bash/MSYS).
+# Works on macOS and Linux.
 # No dependencies beyond bash and standard Unix tools.
 
 set -euo pipefail
@@ -21,7 +21,7 @@ fi
 
 CWD=$(echo "$INPUT" | grep -o '"cwd":"[^"]*"' | head -1 | cut -d'"' -f4)
 PROJECT=$(basename "${CWD:-unknown}" 2>/dev/null || echo "unknown")
-# Escape backslashes for JSON output (Windows paths via Git Bash/MSYS)
+# Escape backslashes for JSON output
 CWD_JSON=$(echo "$CWD" | sed 's/\\/\\\\/g')
 
 # State directory
@@ -34,8 +34,8 @@ TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")
 # Find host PID: walk up process tree looking for a terminal emulator.
 # The host PID is the process directly under the terminal emulator,
 # which is the process that owns the console/tab.
-# This is optional - set to 0 if detection fails. Only needed for
-# the Windows Terminal display backend.
+# This is optional - set to 0 if detection fails. It helps keep
+# per-terminal session tracking stable.
 HOST_PID=0
 
 if [ "$(uname -s)" = "Darwin" ]; then

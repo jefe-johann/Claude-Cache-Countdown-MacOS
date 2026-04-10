@@ -1,11 +1,13 @@
-# Claude Cache Countdown
+# Claude Cache Countdown (macOS / Linux Edition)
 
-Live prompt cache TTL countdown for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) sessions.
+Live prompt cache TTL countdown for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) sessions. 
 
-With Claude Opus 4.6's **1 million token context window**, prompt caching has never been more important. Anthropic caches your conversation context server-side for 5 minutes. Cache hits cost 90% less. But when your agent stops, that cache is silently draining, and the stakes are real:
+> **Note:** This is a custom fork optimized for macOS and Linux users. It features an **automatic background ticker** (no need to leave a python script running in an extra terminal pane!), live **Cost-at-Risk status line integration**, and extra support for **Warp Terminal** (because it's what I use 😜). Windows is NOT supported in this fork.
+
+With Claude Opus 4.6's **1 million token context window**, prompt caching has never been more important. Anthropic caches your conversation context server-side for 5 minutes. Cache hits cost 90% less. But when your agent stops, that cache is silently draining, and the stakes are high:
 
 **At 500K tokens (a medium session in the premium pricing tier):**
-- Cache hit: **$0.50**
+- Standard cache hit within 5 minutes: **$0.50**
 - Cache expired (re-write at 1.25x): **$6.25**
 - **Being one second late costs you $5.75.**
 
@@ -15,19 +17,18 @@ This tool shows you exactly how much time you have left.
 
 We couldn't find anything else that does this. Prompt caching is well-documented by Anthropic, but as of March 2026 we're not aware of any tooling that provides live cache TTL visibility for Claude Code or other LLM CLI tools.
 
-![Cache countdown in Windows Terminal tabs](img/Screenshot%202026-03-14%20035733.png)
+![Cache countdown in terminal tabs](img/Screenshot%202026-03-14%20035733.png)
 
 ## What it does
 
-- Shows a live countdown when your agent stops and the cache is draining
-- Shows **cost at risk** per session (auto-detected from statusline data or transcript)
+- **Fully Automatic Ticker**: A background bash process automatically takes over your terminal tab title exactly when it needs to, no extra python windows to manage.
+- **Cost-At-Risk Statusline**: Automatically adds the live dollar value of your cache to Claude Code's native bottom status line.
+- **Shows a live countdown** when your agent stops and the cache is draining
+- **Warp Terminal Support**: Smoothly integrates with Warp by disabling its aggressive auto-title behavior during Claude sessions so the dynamic countdown can display in the tab title.
 - **Escalating audible alerts**: bell on stop, triple bell at 1 min, 5x bell at 30s, per-second countdown for final 10s
 - Customizable alert thresholds and sound files via config
-- Switches to HOT when you send a new message (cache is refreshing)
 - Tracks multiple Claude Code sessions simultaneously
-- Auto-hides stale sessions after configurable cold TTL
-- Supports multiple display backends (terminal titles, tmux, stdout)
-- Zero dependencies (Python stdlib only)
+- Zero dependencies (Bash + Python stdlib only)
 
 ## Quick Start
 
@@ -37,11 +38,7 @@ We couldn't find anything else that does this. Prompt caching is well-documented
 git clone https://github.com/KatsuJinCode/claude-cache-countdown.git
 cd claude-cache-countdown
 
-# macOS / Linux
 bash install.sh
-
-# Windows (PowerShell 7)
-pwsh -File install.ps1
 ```
 
 The installer adds both hooks to your Claude Code settings. Restart Claude Code to load them.
@@ -85,13 +82,7 @@ Add to `~/.claude/settings.json`:
 }
 ```
 
-**Windows (PowerShell 7):** Use the `.ps1` versions instead:
-```json
-"command": "pwsh.exe -NoProfile -File C:/path/to/claude-cache-countdown/hooks/cache-timer-write.ps1"
-"command": "pwsh.exe -NoProfile -File C:/path/to/claude-cache-countdown/hooks/cache-timer-resume.ps1"
-```
-
-Then run the countdown:
+By default, the `install.sh` handles the background ticker, but if you want to run the ticker manually (or visualize it in a tmux status bar), run:
 
 ```bash
 python cache_countdown.py
@@ -140,11 +131,9 @@ Cost appears between countdown and project name when context data is available.
 
 | Backend | Flag | How it works |
 |---------|------|--------------|
-| **Windows Terminal** | `--display windows` | Sets each tab's title via Win32 `AttachConsole` + `SetConsoleTitleW`. One ticker process manages all tabs. |
-| **ANSI title** | `--display ansi` | Sets terminal title via `\033]0;title\007`. Works on iTerm2, Alacritty, WezTerm, Kitty, most modern terminals. |
+| **ANSI title** | `--display ansi` | Sets terminal title via `\033]0;title\007`. Works on Warp, iTerm2, macOS Terminal.app, Alacritty, WezTerm, Kitty, etc. (Default) |
 | **tmux** | `--display tmux` | Updates `status-right` with countdown for all sessions. |
 | **stdout** | `--display stdout` | Prints countdown to stdout. Pipe into other tools. |
-| **auto** | (default) | Windows Terminal on Windows, tmux if `$TMUX` is set, ANSI otherwise. |
 
 ## Alerts
 
@@ -211,7 +200,7 @@ Example with custom sounds and multiple thresholds:
 }
 ```
 
-Sound playback is cross-platform: Windows (SoundPlayer/.wav, mpv/ffplay for other formats), macOS (afplay), Linux (paplay, aplay, ffplay).
+Sound playback is cross-platform: macOS (afplay), Linux (paplay, aplay, ffplay).
 
 ## Options
 
@@ -239,9 +228,6 @@ The cost appears next to the countdown: `🔴 0:45 $5.75 myapp`
 
 This is the delta between a cache hit and a cache miss (the extra money you pay because you were late). At 500K tokens on the premium tier, a cache hit costs $0.50 but a miss forces a $6.25 re-write, so you're risking $5.75.
 
-### Stale session cleanup
-
-COLD sessions auto-hide after 10 minutes (configurable via `--cold-ttl`). Their timer files are cleaned up automatically so you don't accumulate clutter from finished sessions.
 
 ---
 
@@ -286,10 +272,10 @@ python cache_countdown.py --once --display stdout
 
 | Terminal | Recommended display |
 |----------|---------------------|
-| **Windows Terminal** | `--display windows` |
-| **iTerm2 / Alacritty / WezTerm / Kitty** | `--display ansi` |
+| **Warp / iTerm2 / macOS Terminal.app** | `--display ansi` |
+| **Alacritty / WezTerm / Kitty** | `--display ansi` |
 | **tmux** | `--display tmux` |
-| **VS Code terminal / macOS Terminal.app** | `--display ansi` |
+| **VS Code terminal** | `--display ansi` |
 | **GNU Screen** | `--display stdout` piped to hardstatus |
 
 ### Writing your own hooks

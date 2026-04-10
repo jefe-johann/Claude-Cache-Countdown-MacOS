@@ -261,10 +261,6 @@ test("0 tokens returns empty", cache_countdown.estimate_cost(0) == "")
 test("exceeds_200k flag forces premium", cache_countdown.estimate_cost(100_000, exceeds_200k=True) == "$1.15")
 
 print("\n=== _cwd_to_project_slug ===")
-test("windows path slug", cache_countdown._cwd_to_project_slug(
-    "C:\\Users\\jpswi\\projects\\myapp") == "C--Users-jpswi-projects-myapp")
-test("windows path with spaces", cache_countdown._cwd_to_project_slug(
-    "C:\\Users\\jpswi\\personal projects\\claude-cache-countdown") == "C--Users-jpswi-personal-projects-claude-cache-countdown")
 test("unix path slug", cache_countdown._cwd_to_project_slug(
     "/home/user/projects/myapp") == "-home-user-projects-myapp")
 test("WSL path slug", cache_countdown._cwd_to_project_slug(

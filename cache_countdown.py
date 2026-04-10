@@ -7,8 +7,7 @@ countdown so you know exactly when your cache will expire. Most useful when an
 agent has stopped and you're deciding whether to continue the conversation.
 
 Supports multiple display backends:
-  - Windows Terminal tab titles (default on Windows)
-  - Terminal title via ANSI escape codes (default on macOS/Linux)
+  - Terminal title via ANSI escape codes (default)
   - tmux status bar
   - Plain text to stdout (for piping into other tools)
 
@@ -17,7 +16,6 @@ Usage:
     python cache_countdown.py --display ansi       # ANSI terminal title
     python cache_countdown.py --display tmux       # tmux status-right
     python cache_countdown.py --display stdout     # plain text output
-    python cache_countdown.py --display windows    # Windows Terminal tabs
     python cache_countdown.py --ttl 300            # 5-minute TTL (default)
     python cache_countdown.py --ttl 3600           # 1-hour TTL
     python cache_countdown.py --once               # single update, then exit
@@ -41,163 +39,9 @@ from datetime import datetime, timezone
 # State directory where Claude Code hooks write timer files
 STATE_DIR = Path.home() / ".claude" / "state"
 
-# ---------------------------------------------------------------------------
-# PID discovery via Win32 process tree (pure ctypes, no subprocess, no psutil)
-# ---------------------------------------------------------------------------
-
-_PID_DISCOVERY_AVAILABLE = platform.system() == "Windows"
-_TREE_SCAN_INTERVAL = 5.0
-_last_tree_scan = 0.0
-_cached_tree: dict = {}
-
-
-def _get_process_tree() -> dict:
-    """Return dict of pid -> (parent_pid, exe_name) using CreateToolhelp32Snapshot."""
-    if not _PID_DISCOVERY_AVAILABLE:
-        return {}
-    import ctypes
-    import ctypes.wintypes
-
-    TH32CS_SNAPPROCESS = 0x00000002
-
-    class PROCESSENTRY32(ctypes.Structure):
-        _fields_ = [
-            ("dwSize", ctypes.wintypes.DWORD),
-            ("cntUsage", ctypes.wintypes.DWORD),
-            ("th32ProcessID", ctypes.wintypes.DWORD),
-            ("th32DefaultHeapID", ctypes.POINTER(ctypes.c_ulong)),
-            ("th32ModuleID", ctypes.wintypes.DWORD),
-            ("cntThreads", ctypes.wintypes.DWORD),
-            ("th32ParentProcessID", ctypes.wintypes.DWORD),
-            ("pcPriClassBase", ctypes.c_long),
-            ("dwFlags", ctypes.wintypes.DWORD),
-            ("szExeFile", ctypes.c_char * 260),
-        ]
-
-    tree = {}
-    kernel32 = ctypes.windll.kernel32
-    snap = kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
-    if snap == ctypes.wintypes.HANDLE(-1).value:
-        return tree
-    try:
-        pe = PROCESSENTRY32()
-        pe.dwSize = ctypes.sizeof(PROCESSENTRY32)
-        if kernel32.Process32First(snap, ctypes.byref(pe)):
-            while True:
-                pid = pe.th32ProcessID
-                ppid = pe.th32ParentProcessID
-                try:
-                    exe = pe.szExeFile.decode("utf-8", errors="replace").lower()
-                except Exception:
-                    exe = ""
-                tree[pid] = (ppid, exe)
-                if not kernel32.Process32Next(snap, ctypes.byref(pe)):
-                    break
-    finally:
-        kernel32.CloseHandle(snap)
-    return tree
-
-
-def discover_host_pids(sessions: list[dict]) -> None:
-    """For sessions missing host_pid, discover it from the process tree.
-
-    Finds WindowsTerminal children and matches them to sessions.
-    Tree scans are cached for _TREE_SCAN_INTERVAL seconds.
-    """
-    if not _PID_DISCOVERY_AVAILABLE:
-        return
-
-    global _last_tree_scan, _cached_tree
-
-    needs_pid = [s for s in sessions
-                 if s.get("host_pid", 0) <= 0 or not is_process_alive(s.get("host_pid", 0))]
-    if not needs_pid:
-        return
-
-    t = time.monotonic()
-    if t - _last_tree_scan >= _TREE_SCAN_INTERVAL:
-        _cached_tree = _get_process_tree()
-        _last_tree_scan = t
-
-    tree = _cached_tree
-    if not tree:
-        return
-
-    # Find WindowsTerminal PIDs
-    wt_pids = {pid for pid, (ppid, exe) in tree.items() if "windowsterminal" in exe}
-    if not wt_pids:
-        return
-
-    # Find direct children of WindowsTerminal
-    wt_children = {pid: ppid for pid, (ppid, exe) in tree.items() if ppid in wt_pids}
-    if not wt_children:
-        return
-
-    # Already-assigned PIDs from sessions that have a live host_pid
-    assigned_pids = {s["host_pid"] for s in sessions
-                     if s.get("host_pid", 0) > 0 and is_process_alive(s["host_pid"])}
-
-    # Unassigned WT children (alive, not already claimed)
-    unassigned = [pid for pid in wt_children
-                  if pid not in assigned_pids and is_process_alive(pid)]
-    if not unassigned:
-        return
-
-    def get_descendants(root_pid):
-        desc = set()
-        frontier = [root_pid]
-        while frontier:
-            current = frontier.pop()
-            for pid, (ppid, exe) in tree.items():
-                if ppid == current and pid not in desc:
-                    desc.add(pid)
-                    frontier.append(pid)
-        return desc
-
-    # Simple case: 1 session needs PID, 1 WT child available
-    if len(needs_pid) == 1 and len(unassigned) == 1:
-        _assign_pid(needs_pid[0], unassigned[0])
-        return
-
-    # Multiple: match by looking for claude/node descendants
-    matched = set()
-    for s in needs_pid:
-        best_pid = None
-        for cpid in unassigned:
-            if cpid in matched:
-                continue
-            descs = get_descendants(cpid)
-            has_claude = any("claude" in tree.get(d, (0, ""))[1] for d in descs)
-            has_node = any("node" in tree.get(d, (0, ""))[1] for d in descs)
-            if has_claude or has_node:
-                best_pid = cpid
-                break
-        if best_pid is None:
-            for cpid in unassigned:
-                if cpid not in matched:
-                    best_pid = cpid
-                    break
-        if best_pid:
-            matched.add(best_pid)
-            _assign_pid(s, best_pid)
-
-
-def _assign_pid(session: dict, pid: int) -> None:
-    """Write discovered host_pid back to the timer JSON file and update session dict."""
-    session["host_pid"] = pid
-    f = session.get("file")
-    if not f:
-        return
-    try:
-        data = json.loads(f.read_text(encoding="utf-8"))
-        data["host_pid"] = pid
-        f.write_text(json.dumps(data), encoding="utf-8")
-        print(f"  PID discovered: {session.get('project', '?')} -> PID {pid}")
-    except (json.JSONDecodeError, OSError) as e:
-        print(f"  PID write failed for {session.get('project', '?')}: {e}")
-
 # Default config file location
 CONFIG_PATH = Path.home() / ".claude" / "cache-countdown.json"
+SUPPORTED_PLATFORMS = {"Darwin", "Linux"}
 
 # Default alert configuration
 DEFAULT_ALERTS = [
@@ -262,7 +106,7 @@ def init_config(path: Path = None):
     p.write_text(json.dumps(config, indent=2), encoding="utf-8")
     print(f"Config written to: {p}")
     print("Edit this file to customize alerts. Example with sound files:")
-    print('  {"at": 60, "type": "sound", "sound": "C:/path/to/alarm.wav", "label": "~1 min left"}')
+    print('  {"at": 60, "type": "sound", "sound": "/path/to/alarm.wav", "label": "~1 min left"}')
 
 
 # ---------------------------------------------------------------------------
@@ -305,23 +149,14 @@ def read_cache_timers() -> list[dict]:
 
 
 def is_process_alive(pid: int) -> bool:
-    """Check if a process is still running (cross-platform)."""
+    """Check if a process is still running."""
     if pid <= 0:
         return False
-    if platform.system() == "Windows":
-        import ctypes
-        kernel32 = ctypes.windll.kernel32
-        handle = kernel32.OpenProcess(0x1000, False, pid)
-        if handle:
-            kernel32.CloseHandle(handle)
-            return True
+    try:
+        os.kill(pid, 0)
+        return True
+    except (ProcessLookupError, PermissionError):
         return False
-    else:
-        try:
-            os.kill(pid, 0)
-            return True
-        except (ProcessLookupError, PermissionError):
-            return False
 
 
 def format_countdown(remaining: float) -> str:
@@ -483,28 +318,11 @@ def bell(count=1, spacing=0.15):
 
 
 def play_sound(path: str):
-    """Play a sound file in the background (non-blocking). Cross-platform."""
+    """Play a sound file in the background (non-blocking)."""
     if not os.path.isfile(path):
         return
     try:
-        if platform.system() == "Windows":
-            # Use PowerShell's SoundPlayer for .wav, or mpv/ffplay as fallback
-            if path.lower().endswith(".wav"):
-                subprocess.Popen(
-                    ["powershell", "-NoProfile", "-Command",
-                     f'(New-Object Media.SoundPlayer "{path}").PlaySync()'],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-                )
-            else:
-                # Try mpv, then ffplay for non-wav formats
-                for player in ["mpv --no-video --really-quiet", "ffplay -nodisp -autoexit -loglevel quiet"]:
-                    cmd = player.split() + [path]
-                    try:
-                        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                        return
-                    except FileNotFoundError:
-                        continue
-        elif platform.system() == "Darwin":
+        if platform.system() == "Darwin":
             subprocess.Popen(["afplay", path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         else:
             # Linux: try paplay, then aplay, then ffplay
@@ -728,54 +546,10 @@ class TmuxDisplay:
                        capture_output=True)
 
 
-class WindowsTerminalDisplay:
-    """Set Windows Terminal tab titles via AttachConsole + SetConsoleTitleW."""
-
-    def __init__(self):
-        import ctypes
-        self._kernel32 = ctypes.windll.kernel32
-
-    def update(self, sessions_data: list[dict]):
-        updates = []
-        for s in sessions_data:
-            pid = s.get("host_pid", 0)
-            if pid <= 0:
-                continue
-            title = _format_session_line(s)
-            updates.append((pid, title))
-        self._set_titles(updates)
-
-    def restore(self):
-        # Not much we can do here without knowing original titles
-        pass
-
-    def _set_titles(self, updates: list[tuple[int, str]]):
-        if not updates:
-            return
-        k = self._kernel32
-        if not k.FreeConsole():
-            return
-        for pid, title in updates:
-            if pid <= 0:
-                continue
-            try:
-                if k.AttachConsole(pid):
-                    k.SetConsoleTitleW(title)
-                    k.FreeConsole()
-            except Exception:
-                try:
-                    k.FreeConsole()
-                except Exception:
-                    pass
-        k.AttachConsole(-1)  # reattach to parent
-
-
 def get_display(name: str):
     """Get display backend by name, or auto-detect."""
     if name == "auto":
-        if platform.system() == "Windows":
-            return WindowsTerminalDisplay()
-        elif os.environ.get("TMUX"):
+        if os.environ.get("TMUX"):
             return TmuxDisplay()
         else:
             return AnsiTitleDisplay()
@@ -784,7 +558,6 @@ def get_display(name: str):
         "stdout": StdoutDisplay,
         "ansi": AnsiTitleDisplay,
         "tmux": TmuxDisplay,
-        "windows": WindowsTerminalDisplay,
     }
     cls = backends.get(name)
     if not cls:
@@ -808,7 +581,7 @@ def main():
     parser.add_argument("--once", action="store_true",
                         help="Run once and exit (for testing)")
     parser.add_argument("--display", default="auto",
-                        choices=["auto", "stdout", "ansi", "tmux", "windows"],
+                        choices=["auto", "stdout", "ansi", "tmux"],
                         help="Display backend (default: auto-detect)")
     parser.add_argument("--quiet", action="store_true",
                         help="Disable all audible alerts")
@@ -825,6 +598,10 @@ def main():
     if args.init_config:
         init_config(config_path)
         sys.exit(0)
+
+    if platform.system() not in SUPPORTED_PLATFORMS:
+        print("This fork supports macOS and Linux only.", file=sys.stderr)
+        sys.exit(1)
 
     # Load config file if present
     config = load_config(config_path)

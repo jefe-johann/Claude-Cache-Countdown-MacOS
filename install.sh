@@ -14,6 +14,14 @@ echo "Claude Cache Countdown Installer"
 echo "================================"
 echo ""
 
+case "$(uname -s)" in
+    Darwin|Linux) ;;
+    *)
+        echo "Error: this fork supports macOS and Linux only."
+        exit 1
+        ;;
+esac
+
 # Check prerequisites
 if ! command -v python3 &>/dev/null; then
     echo "Error: python3 is required but not found."
@@ -119,12 +127,17 @@ case "$(basename "${SHELL:-}")" in
     bash) SHELL_RC="$HOME/.bashrc" ;;
 esac
 
-if [ -n "$SHELL_RC" ] && [ -f "$SHELL_RC" ]; then
+if [ -n "$SHELL_RC" ] && [ -f "$SHELL_RC" ] && [ -n "${WARP_SESSION_ID:-}" ]; then
     if grep -q 'WARP_DISABLE_AUTO_TITLE' "$SHELL_RC" 2>/dev/null; then
         echo "Warp auto-title wrapper already installed in $SHELL_RC."
     else
-        echo "Adding Warp auto-title wrapper to $SHELL_RC..."
-        cat >> "$SHELL_RC" << 'WARP_EOF'
+        echo ""
+        echo "Claude Cache puts the countdown timer in your Warp tab title. When there's no timer active, warp will go back to its auto-generated title. This can cause an annoying back and forth. Would you like to add a wrapper to $SHELL_RC to prevent warp from overwriting the custom title? It will only be active in claude sessions, and disables at the end of the session. (y/n)"
+        read -n 1 -r </dev/tty
+        echo ""
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            echo "Adding Warp auto-title wrapper to $SHELL_RC..."
+            cat >> "$SHELL_RC" << 'WARP_EOF'
 
 # claude-cache-countdown: disable Warp auto-title while Claude Code runs
 # so the cache countdown timer can control the tab title.
@@ -139,8 +152,11 @@ if [ -n "${WARP_SESSION_ID:-}" ]; then
     }
 fi
 WARP_EOF
-        echo "  Added to $SHELL_RC"
-        echo "  Run 'source $SHELL_RC' or open a new tab to activate."
+            echo "  Added to $SHELL_RC"
+            echo "  Run 'source $SHELL_RC' or open a new tab to activate."
+        else
+            echo "Skipping wrapper installation. You can always add it manually later."
+        fi
     fi
 fi
 
