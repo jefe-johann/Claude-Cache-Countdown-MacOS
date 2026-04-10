@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # Background countdown ticker for Warp terminal.
-# Updates the terminal tab title with the remaining cache time every second.
-# Launched by the Stop hook, killed by the UserPromptSubmit hook.
+# Polls the timer file every second and updates the tab title:
+#   stopped=false  →  project name (Claude is working)
+#   stopped=true   →  ⏱ M:SS | project (counting down to cache expiry)
+#   expired        →  project name (cache expired, idle)
+#
+# Runs for the lifetime of the session. Launched once by the first Stop hook;
+# stays alive across prompt cycles rather than being killed/relaunched each time.
 #
 # Usage: cache-timer-bg.sh <session_id> <tty_device>
-#
-# Writes its PID to cache-timer-<session_id>.pid for cleanup.
-# Exits automatically when the 5-minute cache TTL expires.
 
 set -euo pipefail
 
@@ -22,15 +24,8 @@ PID_FILE="$STATE_DIR/cache-timer-${SESSION_ID}.pid"
 
 [ -f "$TIMER_FILE" ] || exit 0
 
-# Read timestamp and project name from timer file
-ts=$(grep -o '"timestamp":"[^"]*"' "$TIMER_FILE" 2>/dev/null | cut -d'"' -f4) || exit 0
-project=$(grep -o '"project":"[^"]*"' "$TIMER_FILE" 2>/dev/null | cut -d'"' -f4 || echo "")
-ts_clean=$(echo "$ts" | sed 's/\.[0-9]*Z$//')
-ts_epoch=$(date -juf "%Y-%m-%dT%H:%M:%S" "$ts_clean" +%s 2>/dev/null) || exit 0
-
-# Detect /clear: it creates a new session_id (new JSONL file) but fires no hooks.
-# Watch the project's conversation directory — if a different session's JSONL is
-# modified after we launched, our session is no longer current, so exit.
+# Detect /clear: watch the project's conversation directory for new sessions.
+# If a different session's JSONL is modified after we launched, exit.
 _cwd=$(grep -o '"cwd":"[^"]*"' "$TIMER_FILE" 2>/dev/null | cut -d'"' -f4 || echo "")
 CONV_DIR=""
 if [ -n "$_cwd" ]; then
@@ -38,13 +33,17 @@ if [ -n "$_cwd" ]; then
 fi
 START_EPOCH=$(date -u +%s)
 
-# Write PID file for cleanup by the resume hook
 echo $$ > "$PID_FILE"
 trap 'rm -f "$PID_FILE"' EXIT
 
+# Write title — exits the script if the TTY becomes unwritable (tab closed)
+_write_title() {
+    printf '\033]0;%s\007' "$1" > "$TTY_DEV" 2>/dev/null || exit 0
+}
+
 while true; do
-    now=$(date -u +%s)
-    remaining=$(( 300 - (now - ts_epoch) ))
+    # Exit if timer file was deleted (session ended or cleaned up)
+    [ -f "$TIMER_FILE" ] || exit 0
 
     # Exit if a new session started (e.g. /clear)
     if [ -n "$CONV_DIR" ] && [ -d "$CONV_DIR" ]; then
@@ -53,24 +52,40 @@ while true; do
             [ "$(basename "$_jf" .jsonl)" = "$SESSION_ID" ] && continue
             _mtime=$(stat -f %m "$_jf" 2>/dev/null) || continue
             if [ "$_mtime" -gt "$START_EPOCH" ]; then
-                printf '\033]0;%s\007' "$project" > "$TTY_DEV" 2>/dev/null || true
+                _write_title "$(grep -o '"project":"[^"]*"' "$TIMER_FILE" 2>/dev/null | cut -d'"' -f4 || echo "")"
                 exit 0
             fi
         done
     fi
 
-    if [ "$remaining" -le 0 ]; then
-        # Cache expired — restore title to just project name
-        printf '\033]0;%s\007' "$project" > "$TTY_DEV" 2>/dev/null || true
-        break
-    fi
+    stopped=$(grep -o '"stopped":[a-z]*' "$TIMER_FILE" 2>/dev/null | cut -d: -f2 || echo "true")
+    project=$(grep -o '"project":"[^"]*"' "$TIMER_FILE" 2>/dev/null | cut -d'"' -f4 || echo "")
 
-    mins=$(( remaining / 60 ))
-    secs=$(( remaining % 60 ))
-    if [ -n "$project" ]; then
-        printf '\033]0;⏱ %d:%02d | %s\007' "$mins" "$secs" "$project" > "$TTY_DEV" 2>/dev/null || true
+    if [ "$stopped" = "false" ]; then
+        # Claude is working — hold the title to the project name
+        _write_title "$project"
     else
-        printf '\033]0;⏱ %d:%02d\007' "$mins" "$secs" > "$TTY_DEV" 2>/dev/null || true
+        # Claude stopped — show countdown, or project name if expired
+        ts=$(grep -o '"timestamp":"[^"]*"' "$TIMER_FILE" 2>/dev/null | cut -d'"' -f4 || echo "")
+        if [ -n "$ts" ]; then
+            ts_clean=$(echo "$ts" | sed 's/\.[0-9]*Z$//')
+            ts_epoch=$(date -juf "%Y-%m-%dT%H:%M:%S" "$ts_clean" +%s 2>/dev/null || echo "0")
+            now=$(date -u +%s)
+            remaining=$(( 300 - (now - ts_epoch) ))
+            if [ "$remaining" -gt 0 ]; then
+                mins=$(( remaining / 60 ))
+                secs=$(( remaining % 60 ))
+                if [ -n "$project" ]; then
+                    printf '\033]0;⏱ %d:%02d | %s\007' "$mins" "$secs" "$project" > "$TTY_DEV" 2>/dev/null || exit 0
+                else
+                    printf '\033]0;⏱ %d:%02d\007' "$mins" "$secs" > "$TTY_DEV" 2>/dev/null || exit 0
+                fi
+            else
+                _write_title "$project"
+            fi
+        else
+            _write_title "$project"
+        fi
     fi
 
     sleep 1

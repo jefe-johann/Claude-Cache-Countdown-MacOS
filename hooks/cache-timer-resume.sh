@@ -47,16 +47,6 @@ fi
 # Prefer cwd from hook input, fall back to existing
 FINAL_CWD="${CWD_JSON:-$EXISTING_CWD}"
 
-# Kill background ticker if running
-PID_FILE="$STATE_DIR/cache-timer-${SESSION_ID}.pid"
-if [ -f "$PID_FILE" ]; then
-    bg_pid=$(cat "$PID_FILE" 2>/dev/null)
-    if [ -n "$bg_pid" ]; then
-        kill "$bg_pid" 2>/dev/null || true
-    fi
-    rm -f "$PID_FILE"
-fi
-
 # Discover the actual TTY device and restore tab title to project name
 _tty=""
 _pid=$$
