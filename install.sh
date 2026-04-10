@@ -112,6 +112,39 @@ if changed:
 print()
 "
 
+# Warp terminal: add claude wrapper to disable auto-title during sessions
+SHELL_RC=""
+case "$(basename "${SHELL:-}")" in
+    zsh)  SHELL_RC="$HOME/.zshrc" ;;
+    bash) SHELL_RC="$HOME/.bashrc" ;;
+esac
+
+if [ -n "$SHELL_RC" ] && [ -f "$SHELL_RC" ]; then
+    if grep -q 'WARP_DISABLE_AUTO_TITLE' "$SHELL_RC" 2>/dev/null; then
+        echo "Warp auto-title wrapper already installed in $SHELL_RC."
+    else
+        echo "Adding Warp auto-title wrapper to $SHELL_RC..."
+        cat >> "$SHELL_RC" << 'WARP_EOF'
+
+# claude-cache-countdown: disable Warp auto-title while Claude Code runs
+# so the cache countdown timer can control the tab title.
+# Only activates inside Warp; no-op in other terminals.
+if [ -n "${WARP_SESSION_ID:-}" ]; then
+    claude() {
+        export WARP_DISABLE_AUTO_TITLE=true
+        command claude "$@"
+        local _rc=$?
+        unset WARP_DISABLE_AUTO_TITLE
+        return $_rc
+    }
+fi
+WARP_EOF
+        echo "  Added to $SHELL_RC"
+        echo "  Run 'source $SHELL_RC' or open a new tab to activate."
+    fi
+fi
+
+echo ""
 echo "Installation complete!"
 echo ""
 echo "To start the countdown ticker, run:"

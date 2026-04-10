@@ -62,7 +62,7 @@ while true; do
     project=$(grep -o '"project":"[^"]*"' "$TIMER_FILE" 2>/dev/null | cut -d'"' -f4 || echo "")
 
     if [ "$stopped" = "false" ]; then
-        # Claude is working — hold the title to the project name
+        # Claude is working — show project name
         _write_title "$project"
     else
         # Claude stopped — show countdown, or project name if expired
