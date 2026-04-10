@@ -28,6 +28,16 @@ project=$(grep -o '"project":"[^"]*"' "$TIMER_FILE" 2>/dev/null | cut -d'"' -f4 
 ts_clean=$(echo "$ts" | sed 's/\.[0-9]*Z$//')
 ts_epoch=$(date -juf "%Y-%m-%dT%H:%M:%S" "$ts_clean" +%s 2>/dev/null) || exit 0
 
+# Detect /clear: it creates a new session_id (new JSONL file) but fires no hooks.
+# Watch the project's conversation directory — if a different session's JSONL is
+# modified after we launched, our session is no longer current, so exit.
+_cwd=$(grep -o '"cwd":"[^"]*"' "$TIMER_FILE" 2>/dev/null | cut -d'"' -f4 || echo "")
+CONV_DIR=""
+if [ -n "$_cwd" ]; then
+    CONV_DIR="$HOME/.claude/projects/$(echo "$_cwd" | tr '/_' '-')"
+fi
+START_EPOCH=$(date -u +%s)
+
 # Write PID file for cleanup by the resume hook
 echo $$ > "$PID_FILE"
 trap 'rm -f "$PID_FILE"' EXIT
@@ -35,6 +45,19 @@ trap 'rm -f "$PID_FILE"' EXIT
 while true; do
     now=$(date -u +%s)
     remaining=$(( 300 - (now - ts_epoch) ))
+
+    # Exit if a new session started (e.g. /clear)
+    if [ -n "$CONV_DIR" ] && [ -d "$CONV_DIR" ]; then
+        for _jf in "$CONV_DIR"/*.jsonl; do
+            [ -f "$_jf" ] || continue
+            [ "$(basename "$_jf" .jsonl)" = "$SESSION_ID" ] && continue
+            _mtime=$(stat -f %m "$_jf" 2>/dev/null) || continue
+            if [ "$_mtime" -gt "$START_EPOCH" ]; then
+                printf '\033]0;%s\007' "$project" > "$TTY_DEV" 2>/dev/null || true
+                exit 0
+            fi
+        done
+    fi
 
     if [ "$remaining" -le 0 ]; then
         # Cache expired — restore title to just project name
