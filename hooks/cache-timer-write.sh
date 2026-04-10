@@ -80,6 +80,25 @@ if [ -f "$PID_FILE" ]; then
     rm -f "$PID_FILE"
 fi
 
+# Also kill any other tickers targeting the same TTY (from stale sessions)
+# This prevents multiple tickers fighting over the same tab title
+_kill_stale_tickers() {
+    local tty="$1"
+    for pf in "$STATE_DIR"/cache-timer-*.pid; do
+        [ -f "$pf" ] || continue
+        local pid
+        pid=$(cat "$pf" 2>/dev/null) || continue
+        [ -n "$pid" ] || continue
+        # Check if this process is a cache-timer-bg.sh targeting our TTY
+        local cmdline
+        cmdline=$(ps -o args= -p "$pid" 2>/dev/null) || { rm -f "$pf"; continue; }
+        if echo "$cmdline" | grep -q "cache-timer-bg.sh.*$tty"; then
+            kill "$pid" 2>/dev/null || true
+            rm -f "$pf"
+        fi
+    done
+}
+
 # Discover the actual TTY device by walking up the process tree.
 # Hook subprocesses don't have a controlling terminal (/dev/tty fails),
 # but the parent claude/shell process does — find it and write there.
@@ -97,6 +116,7 @@ done
 
 # Launch background ticker to update Warp tab title
 if [ -n "$_tty" ] && [ -w "$_tty" ]; then
+    _kill_stale_tickers "$_tty"
     SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
     nohup bash "$SCRIPT_DIR/cache-timer-bg.sh" "$SESSION_ID" "$_tty" </dev/null >/dev/null 2>&1 &
     disown
