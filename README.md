@@ -1,8 +1,8 @@
-# Claude Cache Countdown (macOS / Linux Edition)
+# Claude Cache Countdown
 
 Live prompt cache TTL countdown for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) sessions. 
 
-> **Note:** This is a custom fork optimized for macOS and Linux users. It features an **automatic background ticker** (no need to leave a python script running in an extra terminal pane!), live **Cost-at-Risk status line integration**, and extra support for **Warp Terminal** (because it's what I use 😜). Windows is NOT supported in this fork.
+> **Acknowledgments:** This project was heavily inspired by [KatsuJinCode/claude-cache-countdown](https://github.com/KatsuJinCode/claude-cache-countdown) by Julian Switzer. Julian's project laid the brilliant groundwork for using Claude Code hooks to track cache state. This repository takes those core concepts and rebuilds the core engine in Bash for a seamless, zero-window terminal experience.
 
 With Claude Opus 4.6's **1 million token context window**, prompt caching has never been more important. Anthropic caches your conversation context server-side for 5 minutes. Cache hits cost 90% less. But when your agent stops, that cache is silently draining, and the stakes are high:
 
@@ -25,29 +25,29 @@ We couldn't find anything else that does this. Prompt caching is well-documented
 - **Cost-At-Risk Statusline**: Automatically adds the live dollar value of your cache to Claude Code's native bottom status line.
 - **Shows a live countdown** when your agent stops and the cache is draining
 - **Warp Terminal Support**: Smoothly integrates with Warp by disabling its aggressive auto-title behavior during Claude sessions so the dynamic countdown can display in the tab title.
-- **Escalating audible alerts**: bell on stop, triple bell at 1 min, 5x bell at 30s, per-second countdown for final 10s
-- Customizable alert thresholds and sound files via config
-- Tracks multiple Claude Code sessions simultaneously
-- Zero dependencies (Bash + Python stdlib only)
+- Tracks multiple Claude Code sessions across tabs
+- Bash-first runtime, with Python used by the installer and status line wrapper
+- Built and used on macOS
+- Linux should work in theory, but is currently untested
 
 ## Quick Start
 
 ### Automatic install
 
 ```bash
-git clone https://github.com/KatsuJinCode/claude-cache-countdown.git
+git clone <your-fork-or-local-url>
 cd claude-cache-countdown
 
 bash install.sh
 ```
 
-The installer adds both hooks to your Claude Code settings. Restart Claude Code to load them.
+The installer adds both hooks and the status line wrapper to your Claude Code settings. Restart Claude Code to load them.
 
 ### Manual install
 
 Two hooks:
 - **Stop** -- starts the countdown when the agent finishes
-- **UserPromptSubmit** -- switches to HOT when you send a new message
+- **UserPromptSubmit** -- returns the tab title to the project name when you send a new message
 
 Add to `~/.claude/settings.json`:
 
@@ -60,7 +60,7 @@ Add to `~/.claude/settings.json`:
         "hooks": [
           {
             "type": "command",
-            "command": "bash /path/to/claude-cache-countdown/hooks/cache-timer-write.sh",
+            "command": "bash '/path/to/claude-cache-countdown/hooks/cache-timer-write.sh'",
             "timeout": 5
           }
         ]
@@ -72,7 +72,7 @@ Add to `~/.claude/settings.json`:
         "hooks": [
           {
             "type": "command",
-            "command": "bash /path/to/claude-cache-countdown/hooks/cache-timer-resume.sh",
+            "command": "bash '/path/to/claude-cache-countdown/hooks/cache-timer-resume.sh'",
             "timeout": 5
           }
         ]
@@ -82,156 +82,41 @@ Add to `~/.claude/settings.json`:
 }
 ```
 
-By default, the `install.sh` handles the background ticker, but if you want to run the ticker manually (or visualize it in a tmux status bar), run:
-
-```bash
-python cache_countdown.py
-```
-
-The ticker auto-detects your platform and picks the right display backend.
+The installer wires up the hooks, status line wrapper, and background ticker for you. There is no separate ticker command to run.
 
 ## How it works
 
 ```
-Claude Code session is working...     (timer file has stopped=false, shows 🔥 HOT)
+Claude Code session is working...     (timer file has stopped=false, tab title shows project name)
     |
     v
-Agent stops                           (🔔 bell alert)
+Agent stops
     |
     v
-Stop hook --------> sets stopped=true, timestamp=now
+Stop hook --------> sets stopped=true, timestamp=now, starts background ticker
     |
     v
-Ticker ------------> reads timer files every second, shows countdown
+Background ticker -> reads timer file every second and writes `⏱ M:SS | project` to the real TTY
     |
-    |                "🟢 4:32 | myapp"  -->  "🟡 2:15 | myapp"  -->  "🔴 0:45 | myapp"  -->  "❄️ COLD"
-    |                                                                  (🚨 urgent alert at ~1 min)
     v
 User sends new message
     |
     v
-Resume hook ------> sets stopped=false, countdown switches to 🔥 HOT
+Resume hook ------> sets stopped=false, tab title returns to project name
 ```
 
-While the agent is working, every API call resets the cache. The TTL is always full. There's nothing to count down. The countdown only starts when the agent stops and the cache begins draining. Alerts fire at configurable thresholds. Stale COLD sessions auto-hide after 10 minutes.
-
-## Visual states
-
-| Display | Meaning |
-|---------|---------|
-| `🔥 HOT myapp` | Agent is working, cache is always fresh |
-| `🟢 4:32 $1.15 myapp` | Agent stopped, cache is fresh, you have time |
-| `🟡 2:15 $1.15 myapp` | Agent stopped, cache aging, don't wait too long |
-| `🔴 0:45 $1.15 myapp` | Agent stopped, cache about to expire, act now |
-| `❄️ COLD myapp` | Cache expired |
-
-Cost appears between countdown and project name when context data is available.
-
-## Display backends
-
-| Backend | Flag | How it works |
-|---------|------|--------------|
-| **ANSI title** | `--display ansi` | Sets terminal title via `\033]0;title\007`. Works on Warp, iTerm2, macOS Terminal.app, Alacritty, WezTerm, Kitty, etc. (Default) |
-| **tmux** | `--display tmux` | Updates `status-right` with countdown for all sessions. |
-| **stdout** | `--display stdout` | Prints countdown to stdout. Pipe into other tools. |
-
-## Alerts
-
-When the ticker starts, it shows what alerts are configured:
-
-```
-Cache Countdown started (TTL=295s, display=auto)
-Watching: ~/.claude/state/cache-timer-*.json
-Cost: auto-detected from statusline data or transcript on stop
-Alerts:
-  1x bell on agent stop (cache draining)
-  3x bell at 60s remaining (~1 min left)
-  5x bell at 30s remaining (30 seconds)
-  bell every second at 10s remaining
-  (defaults; run --init-config to customize)
-```
-
-Default alerts (escalating urgency):
-- **On agent stop**: single bell, cache is draining
-- **At 1 minute**: triple bell
-- **At 30 seconds**: 5x bell
-- **Final 10 seconds**: bell every second (countdown)
-
-Use `--quiet` to disable alerts. The ticker will tell you how to re-enable them.
-
-### Custom alerts
-
-Generate a config file:
-
-```bash
-python cache_countdown.py --init-config
-```
-
-This creates `~/.claude/cache-countdown.json` with the defaults:
-
-```json
-{
-  "alerts": [
-    {"at": "stop", "type": "bell", "count": 1, "label": "cache draining"},
-    {"at": 60, "type": "bell", "count": 3, "label": "~1 min left"},
-    {"at": 30, "type": "bell", "count": 5, "label": "30 seconds"},
-    {"at": 10, "type": "countdown"}
-  ]
-}
-```
-
-Each alert has:
-- `at`: when to fire. `"stop"` for when the agent stops, or a number (seconds remaining)
-- `type`: `"bell"` (terminal bell), `"sound"` (play a file), or `"countdown"` (bell every second from this point)
-- `count`: how many bells (for `"bell"` type)
-- `sound`: path to a sound file (for `"sound"` type)
-- `label`: text shown in the terminal when the alert fires
-
-Example with custom sounds and multiple thresholds:
-
-```json
-{
-  "alerts": [
-    {"at": "stop", "type": "sound", "sound": "C:/sounds/ding.wav", "label": "cache draining"},
-    {"at": 120, "type": "bell", "count": 1, "label": "2 min warning"},
-    {"at": 60, "type": "sound", "sound": "C:/sounds/alarm.wav", "label": "1 min left"},
-    {"at": 30, "type": "bell", "count": 5, "label": "last chance"}
-  ]
-}
-```
-
-Sound playback is cross-platform: macOS (afplay), Linux (paplay, aplay, ffplay).
-
-## Options
-
-```
---ttl 295       Cache TTL in seconds (default: 295, 5s safety margin under the 5min cache)
---ttl 3600      Use if your API calls use the 1-hour cache ("ttl": "1h")
---interval 1    Update frequency in seconds (default: 1)
---once          Run once and exit (for testing or scripting)
---display X     Choose display backend (auto, windows, ansi, tmux, stdout)
---quiet         Disable all audible alerts
---config PATH   Use a custom config file (default: ~/.claude/cache-countdown.json)
---init-config   Generate a starter config file and exit
---cold-ttl 600  Seconds to keep showing COLD sessions before auto-hiding (default: 600 = 10min)
-```
+While the agent is working, every API call resets the cache. The countdown only matters once the agent stops and the cache begins draining.
 
 ### Cost at risk
 
-The ticker automatically shows how much money is at stake if the cache expires. It reads the actual context size from your session using a three-tier fallback:
-
-1. **Statusline data** (best): if you have a statusline wrapper that writes `~/.claude/state/statusline-data-{session_id}.json`, the ticker reads live token counts from it
-2. **Transcript parsing**: the stop hook reads the last few lines of the session transcript (`~/.claude/projects/.../session_id.jsonl`) to extract token usage
-3. **Graceful fallback**: if neither is available, cost is simply not shown
-
-The cost appears next to the countdown: `🔴 0:45 $5.75 myapp`
+The status line wrapper shows how much money is at stake if the cache expires. It reads Claude Code's current status line JSON and appends a segment like `$5.75 at risk`.
 
 This is the delta between a cache hit and a cache miss (the extra money you pay because you were late). At 500K tokens on the premium tier, a cache hit costs $0.50 but a miss forces a $6.25 re-write, so you're risking $5.75.
 
 
 ---
 
-The default TTL is 295 seconds (4:55) rather than 300 (5:00). The timer starts from when we detect the stop event, not from the last API call. The 5-second buffer means you'll never see "0:01" and think you have time when the cache has already expired.
+The timer currently counts down from 300 seconds (5:00) based on when the Stop hook fires.
 
 ## Timer file format
 
@@ -248,35 +133,16 @@ The Stop hook writes one JSON file per session to `~/.claude/state/cache-timer-{
 ```
 
 - `timestamp`: when the state last changed
-- `stopped`: `true` = cache draining (show countdown), `false` = agent working (show HOT)
-- `host_pid`: PID of the terminal tab's process (optional, used for Windows Terminal tab titles)
+- `stopped`: `true` = cache draining (show countdown), `false` = agent working (show project title)
+- `host_pid`: PID of the process associated with the terminal tab (optional, used for per-tab tracking)
 
-The ticker calculates `remaining = 295 - (now - timestamp)`.
+The ticker calculates `remaining = 300 - (now - timestamp)`.
 
-The UserPromptSubmit hook sets `stopped` to `false` when the user resumes. The Stop hook sets it back to `true` when the agent finishes. Stale files are cleaned up automatically after the cold TTL expires.
+The UserPromptSubmit hook sets `stopped` to `false` when the user resumes. The Stop hook sets it back to `true` when the agent finishes. Stale files can accumulate if sessions end abruptly and can be deleted manually.
 
 ## Adapting to your environment
 
-The tool is split into two independent pieces: **hooks** (write/update JSON files) and **ticker** (read JSON files, display, alerts, cost). They communicate through a simple file format. You can swap either side without touching the other.
-
-### Writing your own display backend
-
-The `StdoutDisplay` class in `cache_countdown.py` is about 10 lines and shows the minimal implementation. The `--display stdout` flag outputs plain text you can pipe:
-
-```bash
-python cache_countdown.py --display stdout | your-tool
-python cache_countdown.py --once --display stdout
-```
-
-### Terminal compatibility
-
-| Terminal | Recommended display |
-|----------|---------------------|
-| **Warp / iTerm2 / macOS Terminal.app** | `--display ansi` |
-| **Alacritty / WezTerm / Kitty** | `--display ansi` |
-| **tmux** | `--display tmux` |
-| **VS Code terminal** | `--display ansi` |
-| **GNU Screen** | `--display stdout` piped to hardstatus |
+The tool is split into three small pieces: **hooks** (write/update JSON files), **background ticker** (read one session's timer file and update the tab title), and **status line wrapper** (append the cost-at-risk segment). They communicate through simple JSON files in `~/.claude/state/`.
 
 ### Writing your own hooks
 
@@ -286,8 +152,8 @@ Two actions:
 2. **On user prompt:** Update the same file with `stopped` set to `false` and `timestamp` set to now.
 
 Optional fields:
-- `host_pid`: enables Windows Terminal tab title display. Set to `0` if not needed.
-- `cwd`: the session's working directory. Enables cost display via transcript parsing.
+- `host_pid`: enables per-tab session tracking. Set to `0` if not needed.
+- `cwd`: the session's working directory. Helps preserve project context and detect session resets.
 
 ### Using without hooks
 
@@ -344,9 +210,8 @@ See [Anthropic's prompt caching docs](https://docs.anthropic.com/en/docs/build-w
 
 ## Requirements
 
-- Python 3.10+
+- Python 3
 - Claude Code CLI with hooks support
-- No external dependencies (stdlib only)
 
 ## License
 

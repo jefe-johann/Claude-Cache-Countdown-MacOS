@@ -21,39 +21,44 @@ ORIGINAL_OUTPUT=""
 if [ -f "$ORIGINAL_CMD_FILE" ]; then
     original_cmd=$(cat "$ORIGINAL_CMD_FILE")
     if [ -n "$original_cmd" ]; then
-        ORIGINAL_OUTPUT=$(echo "$INPUT" | bash -c "$original_cmd" 2>/dev/null) || true
+        ORIGINAL_OUTPUT=$(printf '%s' "$INPUT" | bash -c "$original_cmd" 2>/dev/null) || true
     fi
 fi
 
 # --- Compute cache cost-at-risk ---
-COST_STR=""
-if command -v jq &>/dev/null; then
-    input_tokens=$(echo "$INPUT" | jq -r '.context_window.current_usage.input_tokens // 0' 2>/dev/null) || input_tokens=0
-    cache_create=$(echo "$INPUT" | jq -r '.context_window.current_usage.cache_creation_input_tokens // 0' 2>/dev/null) || cache_create=0
-    cache_read=$(echo "$INPUT" | jq -r '.context_window.current_usage.cache_read_input_tokens // 0' 2>/dev/null) || cache_read=0
+COST_STR=$(
+    INPUT_JSON="$INPUT" python3 <<'PY' 2>/dev/null || true
+import json
+import os
 
-    total=$(( input_tokens + cache_create + cache_read ))
+try:
+    payload = json.loads(os.environ["INPUT_JSON"])
+except Exception:
+    raise SystemExit(0)
 
-    if [ "$total" -gt 0 ] 2>/dev/null; then
-        # Opus pricing: >200K tokens uses higher tier
-        # delta_per_mtok: write_cost - read_cost
-        #   <=200K: $6.25 - $0.50 = $5.75
-        #   >200K:  $12.50 - $1.00 = $11.50
-        if [ "$total" -gt 200000 ]; then
-            # $11.50 per MTok — use integer math: cost_cents = total * 1150 / 1000000
-            cost_cents=$(( total * 1150 / 1000000 ))
-        else
-            # $5.75 per MTok — cost_cents = total * 575 / 1000000
-            cost_cents=$(( total * 575 / 1000000 ))
-        fi
+usage = ((payload.get("context_window") or {}).get("current_usage") or {})
 
-        if [ "$cost_cents" -gt 0 ]; then
-            dollars=$(( cost_cents / 100 ))
-            cents=$(( cost_cents % 100 ))
-            COST_STR=$(printf '$%d.%02d at risk' "$dollars" "$cents")
-        fi
-    fi
-fi
+def as_int(value):
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+input_tokens = as_int(usage.get("input_tokens"))
+cache_create = as_int(usage.get("cache_creation_input_tokens"))
+cache_read = as_int(usage.get("cache_read_input_tokens"))
+total = input_tokens + cache_create + cache_read
+
+if total <= 0:
+    raise SystemExit(0)
+
+rate_cents = 1150 if total > 200_000 else 575
+cost_cents = total * rate_cents // 1_000_000
+
+if cost_cents > 0:
+    print(f"${cost_cents // 100}.{cost_cents % 100:02d} at risk", end="")
+PY
+)
 
 # --- Combine output ---
 if [ -n "$ORIGINAL_OUTPUT" ] && [ -n "$COST_STR" ]; then

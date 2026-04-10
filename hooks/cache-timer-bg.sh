@@ -21,6 +21,7 @@ TTY_DEV="${2:-}"
 STATE_DIR="$HOME/.claude/state"
 TIMER_FILE="$STATE_DIR/cache-timer-${SESSION_ID}.json"
 PID_FILE="$STATE_DIR/cache-timer-${SESSION_ID}.pid"
+OS_NAME="$(uname -s)"
 
 [ -f "$TIMER_FILE" ] || exit 0
 
@@ -41,6 +42,27 @@ _write_title() {
     printf '\033]0;%s\007' "$1" > "$TTY_DEV" 2>/dev/null || exit 0
 }
 
+_mtime_epoch() {
+    local path="$1"
+    case "$OS_NAME" in
+        Darwin) stat -f %m "$path" ;;
+        Linux) stat -c %Y "$path" ;;
+        *) return 1 ;;
+    esac
+}
+
+_timestamp_epoch() {
+    local ts="$1"
+    local ts_clean
+    ts_clean=$(echo "$ts" | sed 's/\.[0-9]*Z$//')
+
+    case "$OS_NAME" in
+        Darwin) date -juf "%Y-%m-%dT%H:%M:%S" "$ts_clean" +%s 2>/dev/null || echo "0" ;;
+        Linux) date -u -d "${ts_clean} UTC" +%s 2>/dev/null || echo "0" ;;
+        *) echo "0" ;;
+    esac
+}
+
 while true; do
     # Exit if timer file was deleted (session ended or cleaned up)
     [ -f "$TIMER_FILE" ] || exit 0
@@ -50,7 +72,7 @@ while true; do
         for _jf in "$CONV_DIR"/*.jsonl; do
             [ -f "$_jf" ] || continue
             [ "$(basename "$_jf" .jsonl)" = "$SESSION_ID" ] && continue
-            _mtime=$(stat -f %m "$_jf" 2>/dev/null) || continue
+            _mtime=$(_mtime_epoch "$_jf" 2>/dev/null) || continue
             if [ "$_mtime" -gt "$START_EPOCH" ]; then
                 _write_title "$(grep -o '"project":"[^"]*"' "$TIMER_FILE" 2>/dev/null | cut -d'"' -f4 || echo "")"
                 exit 0
@@ -68,8 +90,7 @@ while true; do
         # Claude stopped — show countdown, or project name if expired
         ts=$(grep -o '"timestamp":"[^"]*"' "$TIMER_FILE" 2>/dev/null | cut -d'"' -f4 || echo "")
         if [ -n "$ts" ]; then
-            ts_clean=$(echo "$ts" | sed 's/\.[0-9]*Z$//')
-            ts_epoch=$(date -juf "%Y-%m-%dT%H:%M:%S" "$ts_clean" +%s 2>/dev/null || echo "0")
+            ts_epoch=$(_timestamp_epoch "$ts")
             now=$(date -u +%s)
             remaining=$(( 300 - (now - ts_epoch) ))
             if [ "$remaining" -gt 0 ]; then
