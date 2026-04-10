@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Background countdown ticker for Warp terminal.
 # Polls the timer file every second and updates the tab title:
-#   stopped=false  →  project name (Claude is working)
+#   stopped=false  →  no title updates (Warp owns the tab title while Claude is working)
 #   stopped=true   →  ⏱ M:SS | project (counting down to cache expiry)
 #   expired        →  project name (cache expired, idle)
 #
@@ -37,9 +37,47 @@ START_EPOCH=$(date -u +%s)
 echo $$ > "$PID_FILE"
 trap 'rm -f "$PID_FILE"' EXIT
 
+# Sound alert state — each fires once per countdown
+_beeped_120=false
+_beeped_60=false
+_beeped_30=false
+
+_beep() {
+    local count="$1"
+    (
+        for (( i=0; i<count; i++ )); do
+            /usr/bin/afplay /System/Library/Sounds/Ping.aiff >/dev/null 2>&1 || true
+            if [ "$i" -lt $((count - 1)) ]; then
+                sleep 0.3 || true
+            fi
+        done
+    ) >/dev/null 2>&1 &
+}
+
 # Write title — exits the script if the TTY becomes unwritable (tab closed)
 _write_title() {
     printf '\033]0;%s\007' "$1" > "$TTY_DEV" 2>/dev/null || exit 0
+}
+
+# Disabled for now: actively reasserting a custom title while Claude is the
+# foreground process causes heavy flicker in Warp. Keeping this helper around
+# makes it easier to revisit that approach later.
+_active_title() {
+    local project="$1"
+    local separator="|"
+
+    # Warp appears more willing to reclaim a static title than one that is
+    # still changing. Alternate the separator so each active-state write is a
+    # distinct title without looking like a countdown has started.
+    if [ $(( $(date -u +%s) % 2 )) -eq 1 ]; then
+        separator="·"
+    fi
+
+    if [ -n "$project" ]; then
+        printf '⏱ 5:00 %s %s' "$separator" "$project"
+    else
+        printf '⏱ 5:00'
+    fi
 }
 
 _mtime_epoch() {
@@ -84,8 +122,14 @@ while true; do
     project=$(grep -o '"project":"[^"]*"' "$TIMER_FILE" 2>/dev/null | cut -d'"' -f4 || echo "")
 
     if [ "$stopped" = "false" ]; then
-        # Claude is working — show project name
-        _write_title "$project"
+        # Claude is working — reset alert state for next countdown
+        _beeped_120=false
+        _beeped_60=false
+        _beeped_30=false
+        # Disabled for now: letting Warp own the active-session title avoids
+        # a back-and-forth flicker while Claude is still responding.
+        #
+        # _write_title "$(_active_title "$project")"
     else
         # Claude stopped — show countdown, or project name if expired
         ts=$(grep -o '"timestamp":"[^"]*"' "$TIMER_FILE" 2>/dev/null | cut -d'"' -f4 || echo "")
@@ -94,6 +138,20 @@ while true; do
             now=$(date -u +%s)
             remaining=$(( 300 - (now - ts_epoch) ))
             if [ "$remaining" -gt 0 ]; then
+                # Sound alerts at key thresholds
+                if [ "$remaining" -le 120 ] && [ "$_beeped_120" = "false" ]; then
+                    _beeped_120=true
+                    _beep 1
+                fi
+                if [ "$remaining" -le 60 ] && [ "$_beeped_60" = "false" ]; then
+                    _beeped_60=true
+                    _beep 2
+                fi
+                if [ "$remaining" -le 30 ] && [ "$_beeped_30" = "false" ]; then
+                    _beeped_30=true
+                    _beep 3
+                fi
+
                 mins=$(( remaining / 60 ))
                 secs=$(( remaining % 60 ))
                 if [ -n "$project" ]; then

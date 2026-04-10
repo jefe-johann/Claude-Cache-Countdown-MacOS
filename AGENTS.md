@@ -13,7 +13,7 @@ Installed tool for tracking Anthropic prompt cache TTL (5-minute expiry) across 
 1. Claude Code finishes responding → Stop hook writes `stopped=true` timer file, discovers TTY device (walks process tree for real `/dev/ttysXXX`), launches `cache-timer-bg.sh` in background
 2. Background ticker updates Warp tab title every second: `⏱ 4:59`, `⏱ 4:58`, ...
 3. Timer expires → ticker restores the project title and keeps waiting for the next state change
-4. User sends new prompt → UserPromptSubmit hook restores the project title and writes `stopped=false`
+4. User sends new prompt → UserPromptSubmit hook writes `stopped=false` and Warp takes the tab title back
 
 ## Why tab title, not status line
 

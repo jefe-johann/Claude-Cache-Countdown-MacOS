@@ -21,10 +21,10 @@ We couldn't find anything else that does this. Prompt caching is well-documented
 
 ## What it does
 
-- **Fully Automatic Ticker**: A background bash process automatically takes over your terminal tab title exactly when it needs to, no extra python windows to manage.
+- **Fully Automatic Ticker**: A background bash process takes over your terminal tab title only while the cache is actually draining, no extra python windows to manage.
 - **Cost-At-Risk Statusline**: Automatically adds the live dollar value of your cache to Claude Code's native bottom status line.
 - **Shows a live countdown** when your agent stops and the cache is draining
-- **Warp Terminal Support**: Smoothly integrates with Warp by disabling its aggressive auto-title behavior during Claude sessions so the dynamic countdown can display in the tab title.
+- **Warp-Friendly Countdown**: Leaves Warp in charge of the tab title while Claude is actively responding, then takes over only for the actual countdown.
 - Tracks multiple Claude Code sessions across tabs
 - Bash-first runtime, with Python used by the installer and status line wrapper
 - Built and used on macOS
@@ -47,7 +47,7 @@ The installer adds both hooks and the status line wrapper to your Claude Code se
 
 Two hooks:
 - **Stop** -- starts the countdown when the agent finishes
-- **UserPromptSubmit** -- returns the tab title to the project name when you send a new message
+- **UserPromptSubmit** -- marks the timer active again when you send a new message and hands title control back to Warp
 
 Add to `~/.claude/settings.json`:
 
@@ -87,7 +87,7 @@ The installer wires up the hooks, status line wrapper, and background ticker for
 ## How it works
 
 ```
-Claude Code session is working...     (timer file has stopped=false, tab title shows project name)
+Claude Code session is working...     (timer file has stopped=false, Warp owns the tab title)
     |
     v
 Agent stops
@@ -102,7 +102,7 @@ Background ticker -> reads timer file every second and writes `⏱ M:SS | projec
 User sends new message
     |
     v
-Resume hook ------> sets stopped=false, tab title returns to project name
+Resume hook ------> sets stopped=false, Warp takes the tab title back
 ```
 
 While the agent is working, every API call resets the cache. The countdown only matters once the agent stops and the cache begins draining.
@@ -133,7 +133,7 @@ The Stop hook writes one JSON file per session to `~/.claude/state/cache-timer-{
 ```
 
 - `timestamp`: when the state last changed
-- `stopped`: `true` = cache draining (show countdown), `false` = agent working (show project title)
+- `stopped`: `true` = cache draining (show countdown), `false` = agent working (no custom title writes)
 - `host_pid`: PID of the process associated with the terminal tab (optional, used for per-tab tracking)
 
 The ticker calculates `remaining = 300 - (now - timestamp)`.
@@ -207,6 +207,15 @@ These numbers reflect **input token costs only**, which is what prompt caching a
 - For Claude Max subscribers: cost is flat-rate, but cache still affects latency and rate limits
 
 See [Anthropic's prompt caching docs](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching) for details.
+
+### Best Practices: `/compact` and `/clear`
+
+As your context window grows, so does your financial risk if the cache expires. To avoid massive re-write costs, use these native Claude Code commands to manage your context size:
+
+- **/compact**: Compresses the conversation history while preserving key information. This shrinks the context window significantly, giving you a smaller, cheaper cache to maintain.
+- **/clear**: Wipes the session entirely. If you've finished a major task and are moving on to something new, clearing ensures you start fresh and aren't paying to cache irrelevant history.
+
+Keeping your context small minimizes the penalty if you accidentally let the 5-minute timer expire.
 
 ## Requirements
 

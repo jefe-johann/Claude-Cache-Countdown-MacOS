@@ -12,6 +12,24 @@
 
 set -euo pipefail
 
+# Disabled for now: actively reasserting a custom title while Claude is the
+# foreground process causes heavy flicker in Warp. Keeping this helper around
+# makes it easier to revisit that approach later.
+_active_title() {
+    local project="$1"
+    local separator="|"
+
+    if [ $(( $(date -u +%s) % 2 )) -eq 1 ]; then
+        separator="·"
+    fi
+
+    if [ -n "$project" ]; then
+        printf '⏱ 5:00 %s %s' "$separator" "$project"
+    else
+        printf '⏱ 5:00'
+    fi
+}
+
 INPUT=$(cat)
 
 SESSION_ID=$(echo "$INPUT" | grep -o '"session_id":"[^"]*"' | head -1 | cut -d'"' -f4)
@@ -47,22 +65,25 @@ fi
 # Prefer cwd from hook input, fall back to existing
 FINAL_CWD="${CWD_JSON:-$EXISTING_CWD}"
 
-# Discover the actual TTY device and restore tab title to project name
-_tty=""
-_pid=$$
-for _ in $(seq 1 15); do
-    _t=$(ps -o tty= -p "$_pid" 2>/dev/null | tr -d ' ')
-    if [ -n "$_t" ] && [ "$_t" != "??" ]; then
-        _tty="/dev/$_t"
-        break
-    fi
-    _pid=$(ps -o ppid= -p "$_pid" 2>/dev/null | tr -d ' ')
-    [ -z "$_pid" ] || [ "$_pid" = "0" ] || [ "$_pid" = "1" ] && break
-done
-if [ -n "$_tty" ] && [ -w "$_tty" ]; then
-    _project=$(grep -o '"project":"[^"]*"' "$TIMER_FILE" 2>/dev/null | cut -d'"' -f4 || echo "")
-    printf '\033]0;%s\007' "$_project" > "$_tty" 2>/dev/null || true
-fi
+# Disabled for now: let Warp restore and own the active-session title after
+# the user submits a prompt instead of forcing a custom project title here.
+#
+# _tty=""
+# _pid=$$
+# for _ in $(seq 1 15); do
+#     _t=$(ps -o tty= -p "$_pid" 2>/dev/null | tr -d ' ')
+#     if [ -n "$_t" ] && [ "$_t" != "??" ]; then
+#         _tty="/dev/$_t"
+#         break
+#     fi
+#     _pid=$(ps -o ppid= -p "$_pid" 2>/dev/null | tr -d ' ')
+#     [ -z "$_pid" ] || [ "$_pid" = "0" ] || [ "$_pid" = "1" ] && break
+# done
+# if [ -n "$_tty" ] && [ -w "$_tty" ]; then
+#     _project=$(grep -o '"project":"[^"]*"' "$TIMER_FILE" 2>/dev/null | cut -d'"' -f4 || echo "")
+#     [ -n "$_project" ] || _project="$PROJECT"
+#     printf '\033]0;%s\007' "$(_active_title "$_project")" > "$_tty" 2>/dev/null || true
+# fi
 
 # Write timer file with stopped=false FIRST (before any PID discovery)
 printf '{"timestamp":"%s","session_id":"%s","project":"%s","host_pid":%d,"stopped":false,"cwd":"%s"}' \

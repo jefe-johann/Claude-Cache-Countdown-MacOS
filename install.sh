@@ -138,25 +138,53 @@ if changed:
 print()
 PY
 
-# Warp terminal: add claude wrapper to disable auto-title during sessions
+# Disabled for now: we tried claiming the Warp tab title during active Claude
+# responses too, but in practice that created a lot of title flicker. Keeping
+# the installer logic here in a commented block makes it easy to revisit later.
+: <<'WARP_AUTO_TITLE_DISABLED'
+# Warp terminal: add shell integration to disable auto-title during Claude sessions
 SHELL_RC=""
-case "$(basename "${SHELL:-}")" in
+SHELL_NAME="$(basename "${SHELL:-}")"
+case "$SHELL_NAME" in
     zsh)  SHELL_RC="$HOME/.zshrc" ;;
     bash) SHELL_RC="$HOME/.bashrc" ;;
 esac
 
 if [ -n "$SHELL_RC" ] && [ -f "$SHELL_RC" ] && [ -n "${WARP_SESSION_ID:-}" ]; then
-    if grep -q 'WARP_DISABLE_AUTO_TITLE' "$SHELL_RC" 2>/dev/null; then
-        echo "Warp auto-title wrapper already installed in $SHELL_RC."
-    else
-        echo ""
-        echo "Claude Cache puts the countdown timer in your Warp tab title. When there's no timer active, warp will go back to its auto-generated title. This can cause an annoying back and forth. Would you like to add a wrapper to $SHELL_RC to prevent warp from overwriting the custom title? It will only be active in claude sessions, and disables at the end of the session. (y/n)"
-        read -n 1 -r </dev/tty
-        echo ""
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
-            echo "Adding Warp auto-title wrapper to $SHELL_RC..."
-            cat >> "$SHELL_RC" << 'WARP_EOF'
+    if [ "$SHELL_NAME" = "zsh" ]; then
+        WARP_SNIPPET=$(cat <<'WARP_EOF'
+# claude-cache-countdown: disable Warp auto-title while Claude Code runs
+# so the cache countdown timer can control the tab title.
+# Only activates inside Warp; no-op in other terminals.
+if [ -n "${WARP_SESSION_ID:-}" ]; then
+    _claude_cache_countdown_preexec() {
+        case "$1" in
+            claude|claude\ *|command\ claude|command\ claude\ *|nocorrect\ claude|nocorrect\ claude\ *|*/claude|*/claude\ *|command\ */claude|command\ */claude\ *|nocorrect\ */claude|nocorrect\ */claude\ *)
+                export WARP_DISABLE_AUTO_TITLE=true
+                export CLAUDE_CACHE_COUNTDOWN_WARP_TITLE_OWNED=1
+                ;;
+        esac
+    }
 
+    _claude_cache_countdown_precmd() {
+        if [ -n "${CLAUDE_CACHE_COUNTDOWN_WARP_TITLE_OWNED:-}" ]; then
+            unset WARP_DISABLE_AUTO_TITLE
+            unset CLAUDE_CACHE_COUNTDOWN_WARP_TITLE_OWNED
+        fi
+    }
+
+    typeset -ga preexec_functions precmd_functions
+    if (( ${preexec_functions[(Ie)_claude_cache_countdown_preexec]} == 0 )); then
+        preexec_functions+=(_claude_cache_countdown_preexec)
+    fi
+    if (( ${precmd_functions[(Ie)_claude_cache_countdown_precmd]} == 0 )); then
+        precmd_functions+=(_claude_cache_countdown_precmd)
+    fi
+fi
+WARP_EOF
+)
+
+        WARP_OLD_SNIPPET=$(cat <<'WARP_EOF'
 # claude-cache-countdown: disable Warp auto-title while Claude Code runs
 # so the cache countdown timer can control the tab title.
 # Only activates inside Warp; no-op in other terminals.
@@ -170,13 +198,66 @@ if [ -n "${WARP_SESSION_ID:-}" ]; then
     }
 fi
 WARP_EOF
+)
+    else
+        WARP_SNIPPET=$(cat <<'WARP_EOF'
+# claude-cache-countdown: disable Warp auto-title while Claude Code runs
+# so the cache countdown timer can control the tab title.
+# Only activates inside Warp; no-op in other terminals.
+if [ -n "${WARP_SESSION_ID:-}" ]; then
+    claude() {
+        export WARP_DISABLE_AUTO_TITLE=true
+        command claude "$@"
+        local _rc=$?
+        unset WARP_DISABLE_AUTO_TITLE
+        return $_rc
+    }
+fi
+WARP_EOF
+)
+        WARP_OLD_SNIPPET=""
+    fi
+
+    if grep -q '_claude_cache_countdown_preexec\|WARP_DISABLE_AUTO_TITLE' "$SHELL_RC" 2>/dev/null; then
+        if [ "$SHELL_NAME" = "zsh" ] && grep -q '_claude_cache_countdown_preexec' "$SHELL_RC" 2>/dev/null; then
+            echo "Warp auto-title integration already installed in $SHELL_RC."
+        elif [ "$SHELL_NAME" = "zsh" ] && python3 - "$SHELL_RC" "$WARP_OLD_SNIPPET" "$WARP_SNIPPET" <<'PY'
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+old = sys.argv[2]
+new = sys.argv[3]
+text = path.read_text(encoding="utf-8")
+
+if old in text and new not in text:
+    path.write_text(text.replace(old, new, 1), encoding="utf-8")
+    sys.exit(0)
+
+sys.exit(1)
+PY
+        then
+            echo "Updated Warp auto-title integration in $SHELL_RC."
+            echo "  Run 'source $SHELL_RC' or open a new tab to activate."
+        else
+            echo "Warp auto-title integration already present in $SHELL_RC."
+        fi
+    else
+        echo ""
+        echo "Claude Cache puts the countdown timer in your Warp tab title. Warp can auto-generate tab names from the foreground command, which can fight the timer while Claude is running. Would you like to add shell integration to $SHELL_RC to prevent Warp from overwriting the custom title during Claude sessions? (y/n)"
+        read -n 1 -r </dev/tty
+        echo ""
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            echo "Adding Warp auto-title integration to $SHELL_RC..."
+            printf '\n%s\n' "$WARP_SNIPPET" >> "$SHELL_RC"
             echo "  Added to $SHELL_RC"
             echo "  Run 'source $SHELL_RC' or open a new tab to activate."
         else
-            echo "Skipping wrapper installation. You can always add it manually later."
+            echo "Skipping shell integration. You can always add it manually later."
         fi
     fi
 fi
+WARP_AUTO_TITLE_DISABLED
 
 echo ""
 echo "Installation complete!"

@@ -55,8 +55,24 @@ if total <= 0:
 rate_cents = 1150 if total > 200_000 else 575
 cost_cents = total * rate_cents // 1_000_000
 
+term = os.environ.get("TERM", "")
+colorterm = os.environ.get("COLORTERM", "")
+supports_256 = "256" in term or colorterm in {"truecolor", "24bit"}
+
+def colorize(text, code):
+    if os.environ.get("NO_COLOR"):
+        return text
+    return f"\033[{code}m{text}\033[0m"
+
 if cost_cents > 0:
-    print(f"${cost_cents // 100}.{cost_cents % 100:02d} at risk", end="")
+    cost_str = f"${cost_cents // 100}.{cost_cents % 100:02d} at risk"
+    if cost_cents > 1000:
+        cost_str = colorize(cost_str, "31")
+    elif cost_cents > 500:
+        cost_str = colorize(cost_str, "38;5;208" if supports_256 else "33")
+    elif cost_cents > 250:
+        cost_str = colorize(cost_str, "33")
+    print(cost_str, end="")
 PY
 )
 
