@@ -47,6 +47,33 @@ fi
 # Prefer cwd from hook input, fall back to existing
 FINAL_CWD="${CWD_JSON:-$EXISTING_CWD}"
 
+# Kill background ticker if running
+PID_FILE="$STATE_DIR/cache-timer-${SESSION_ID}.pid"
+if [ -f "$PID_FILE" ]; then
+    bg_pid=$(cat "$PID_FILE" 2>/dev/null)
+    if [ -n "$bg_pid" ]; then
+        kill "$bg_pid" 2>/dev/null || true
+    fi
+    rm -f "$PID_FILE"
+fi
+
+# Discover the actual TTY device and restore tab title to project name
+_tty=""
+_pid=$$
+for _ in $(seq 1 15); do
+    _t=$(ps -o tty= -p "$_pid" 2>/dev/null | tr -d ' ')
+    if [ -n "$_t" ] && [ "$_t" != "??" ]; then
+        _tty="/dev/$_t"
+        break
+    fi
+    _pid=$(ps -o ppid= -p "$_pid" 2>/dev/null | tr -d ' ')
+    [ -z "$_pid" ] || [ "$_pid" = "0" ] || [ "$_pid" = "1" ] && break
+done
+if [ -n "$_tty" ] && [ -w "$_tty" ]; then
+    _project=$(grep -o '"project":"[^"]*"' "$TIMER_FILE" 2>/dev/null | cut -d'"' -f4 || echo "")
+    printf '\033]0;%s\007' "$_project" > "$_tty" 2>/dev/null || true
+fi
+
 # Write timer file with stopped=false FIRST (before any PID discovery)
 printf '{"timestamp":"%s","session_id":"%s","project":"%s","host_pid":%d,"stopped":false,"cwd":"%s"}' \
     "$TIMESTAMP" "$SESSION_ID" "$PROJECT" "$HOST_PID" "$FINAL_CWD" > "$TIMER_FILE"

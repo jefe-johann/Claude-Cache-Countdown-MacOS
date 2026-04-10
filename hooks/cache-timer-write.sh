@@ -70,4 +70,36 @@ fi
 printf '{"timestamp":"%s","session_id":"%s","project":"%s","host_pid":%d,"stopped":true,"cwd":"%s"}' \
     "$TIMESTAMP" "$SESSION_ID" "$PROJECT" "$HOST_PID" "${CWD_JSON:-}" > "$TIMER_FILE"
 
+# Kill any existing background ticker for this session
+PID_FILE="$STATE_DIR/cache-timer-${SESSION_ID}.pid"
+if [ -f "$PID_FILE" ]; then
+    old_pid=$(cat "$PID_FILE" 2>/dev/null)
+    if [ -n "$old_pid" ]; then
+        kill "$old_pid" 2>/dev/null || true
+    fi
+    rm -f "$PID_FILE"
+fi
+
+# Discover the actual TTY device by walking up the process tree.
+# Hook subprocesses don't have a controlling terminal (/dev/tty fails),
+# but the parent claude/shell process does — find it and write there.
+_tty=""
+_pid=$$
+for _ in $(seq 1 15); do
+    _t=$(ps -o tty= -p "$_pid" 2>/dev/null | tr -d ' ')
+    if [ -n "$_t" ] && [ "$_t" != "??" ]; then
+        _tty="/dev/$_t"
+        break
+    fi
+    _pid=$(ps -o ppid= -p "$_pid" 2>/dev/null | tr -d ' ')
+    [ -z "$_pid" ] || [ "$_pid" = "0" ] || [ "$_pid" = "1" ] && break
+done
+
+# Launch background ticker to update Warp tab title
+if [ -n "$_tty" ] && [ -w "$_tty" ]; then
+    SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+    nohup bash "$SCRIPT_DIR/cache-timer-bg.sh" "$SESSION_ID" "$_tty" </dev/null >/dev/null 2>&1 &
+    disown
+fi
+
 exit 0
