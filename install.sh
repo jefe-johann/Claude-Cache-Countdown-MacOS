@@ -8,6 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SETTINGS_FILE="$HOME/.claude/settings.json"
 STOP_HOOK="$SCRIPT_DIR/hooks/cache-timer-write.sh"
 RESUME_HOOK="$SCRIPT_DIR/hooks/cache-timer-resume.sh"
+STATUSLINE_HOOK="$SCRIPT_DIR/hooks/statusline-cost.sh"
 
 echo "Claude Cache Countdown Installer"
 echo "================================"
@@ -19,14 +20,15 @@ if ! command -v python3 &>/dev/null; then
     exit 1
 fi
 
-chmod +x "$STOP_HOOK" "$RESUME_HOOK"
+chmod +x "$STOP_HOOK" "$RESUME_HOOK" "$STATUSLINE_HOOK"
 
 # Create state directory
 mkdir -p "$HOME/.claude/state"
 
-echo "Stop hook:   $STOP_HOOK"
-echo "Resume hook: $RESUME_HOOK"
-echo "Ticker:      $SCRIPT_DIR/cache_countdown.py"
+echo "Stop hook:      $STOP_HOOK"
+echo "Resume hook:    $RESUME_HOOK"
+echo "Status line:    $STATUSLINE_HOOK"
+echo "Ticker:         $SCRIPT_DIR/cache_countdown.py"
 echo ""
 
 # Check if settings.json exists
@@ -44,6 +46,8 @@ import json, sys
 settings_path = '$SETTINGS_FILE'
 stop_cmd = 'bash $STOP_HOOK'
 resume_cmd = 'bash $RESUME_HOOK'
+statusline_cmd = 'bash $STATUSLINE_HOOK'
+original_cmd_file = '$HOME/.claude/state/cache-countdown-original-statusline.txt'
 
 with open(settings_path, 'r') as f:
     settings = json.load(f)
@@ -78,6 +82,28 @@ if not already:
     changed = True
 else:
     print('  UserPromptSubmit hook already installed.')
+
+# Add status line wrapper
+import os
+sl = settings.get('statusLine', {})
+current_sl_cmd = sl.get('command', '') if isinstance(sl, dict) else ''
+ocf = os.path.expandvars(original_cmd_file)
+
+if 'statusline-cost' in current_sl_cmd:
+    print('  Status line wrapper already installed.')
+else:
+    # Back up existing status line command if there is one
+    if current_sl_cmd:
+        os.makedirs(os.path.dirname(ocf), exist_ok=True)
+        with open(ocf, 'w') as bf:
+            bf.write(current_sl_cmd)
+        print(f'  Backed up existing status line to {ocf}')
+    settings['statusLine'] = {
+        'type': 'command',
+        'command': statusline_cmd
+    }
+    print('  Installed status line cost wrapper.')
+    changed = True
 
 if changed:
     with open(settings_path, 'w') as f:
