@@ -35,6 +35,19 @@ if ! command -v python3 &>/dev/null; then
     exit 1
 fi
 
+missing_hooks=()
+for hook in "$STOP_HOOK" "$RESUME_HOOK" "$STATUSLINE_HOOK" "$ALERT_HOOK"; do
+    [ -f "$hook" ] || missing_hooks+=("$hook")
+done
+if [ "${#missing_hooks[@]}" -gt 0 ]; then
+    echo "Error: required hook script(s) not found:"
+    for hook in "${missing_hooks[@]}"; do
+        echo "  $hook"
+    done
+    echo "Your checkout looks incomplete. Re-clone or 'git pull' and try again."
+    exit 1
+fi
+
 chmod +x "$STOP_HOOK" "$RESUME_HOOK" "$STATUSLINE_HOOK" "$ALERT_HOOK"
 
 # Create state directory
@@ -86,7 +99,9 @@ if [ ! -f "$CONFIG_FILE" ]; then
         echo "No interactive TTY detected; defaulting to Pro / Standard (5 minutes)."
     fi
 
-    cat > "$CONFIG_FILE" <<EOF
+    config_tmp="${CONFIG_FILE}.tmp.$$"
+    trap 'rm -f "$config_tmp"' EXIT
+    cat > "$config_tmp" <<EOF
 # Claude Cache Countdown configuration
 # Edit this file to customize countdown behavior.
 
@@ -112,6 +127,8 @@ COUNTDOWN_DEBUG=false
 # Optional override for the debug log path.
 COUNTDOWN_DEBUG_LOG_FILE="$HOME/.claude/state/cache-countdown-debug.log"
 EOF
+    mv "$config_tmp" "$CONFIG_FILE"
+    trap - EXIT
     echo "  Wrote $CONFIG_FILE"
 else
     echo "Keeping existing config at $CONFIG_FILE"
@@ -144,6 +161,7 @@ python3 <<'PY'
 import json
 import os
 import shlex
+import sys
 
 settings_path = os.environ["SETTINGS_FILE"]
 stop_cmd = f"bash {shlex.quote(os.environ['STOP_HOOK'])}"
@@ -151,8 +169,16 @@ resume_cmd = f"bash {shlex.quote(os.environ['RESUME_HOOK'])}"
 statusline_cmd = f"bash {shlex.quote(os.environ['STATUSLINE_HOOK'])}"
 original_cmd_file = os.environ["ORIGINAL_CMD_FILE"]
 
-with open(settings_path, "r", encoding="utf-8") as f:
-    settings = json.load(f)
+try:
+    with open(settings_path, "r", encoding="utf-8") as f:
+        settings = json.load(f)
+except json.JSONDecodeError as exc:
+    sys.stderr.write(
+        f"Error: {settings_path} is not valid JSON ({exc.msg} at line {exc.lineno}, "
+        f"col {exc.colno}).\nFix the file (or remove it to start fresh) and re-run "
+        f"the installer.\n"
+    )
+    sys.exit(1)
 
 hooks = settings.setdefault("hooks", {})
 changed = False
@@ -202,27 +228,43 @@ current_sl_cmd = sl.get("command", "") if isinstance(sl, dict) else ""
 if "statusline-cost" in current_sl_cmd:
     if not isinstance(sl, dict):
         sl = {}
-    if sl.get("refreshInterval") != 1:
+    refresh = sl.get("refreshInterval")
+    # Only force refreshInterval when missing or non-positive — respect a user's
+    # deliberate choice (e.g. higher value for battery / slow shells).
+    if not isinstance(refresh, (int, float)) or refresh <= 0:
         sl["refreshInterval"] = 1
         settings["statusLine"] = sl
-        print("  Updated status line refreshInterval to 1 second.")
+        print("  Set status line refreshInterval to 1 second.")
         changed = True
     else:
-        print("  Status line wrapper already installed.")
+        print(f"  Status line wrapper already installed (refreshInterval={refresh}s).")
 else:
     if current_sl_cmd:
         os.makedirs(os.path.dirname(original_cmd_file), exist_ok=True)
-        with open(original_cmd_file, "w", encoding="utf-8") as backup_file:
-            backup_file.write(current_sl_cmd)
-        print(f"  Backed up existing status line to {original_cmd_file}")
+        if os.path.exists(original_cmd_file):
+            print(
+                f"  Existing backup at {original_cmd_file} kept (not overwritten); "
+                f"current statusLine command discarded."
+            )
+        else:
+            with open(original_cmd_file, "w", encoding="utf-8") as backup_file:
+                backup_file.write(current_sl_cmd)
+            print(f"  Backed up existing status line to {original_cmd_file}")
     settings["statusLine"] = {"type": "command", "command": statusline_cmd, "refreshInterval": 1}
     print("  Installed status line cost wrapper.")
     changed = True
 
 if changed:
-    with open(settings_path, "w", encoding="utf-8") as f:
-        json.dump(settings, f, indent=2)
-        f.write("\n")
+    tmp_path = f"{settings_path}.tmp.{os.getpid()}"
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(settings, f, indent=2)
+            f.write("\n")
+        os.replace(tmp_path, settings_path)
+    except Exception:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+        raise
 
 print()
 PY
