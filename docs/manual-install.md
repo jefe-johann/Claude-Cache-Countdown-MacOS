@@ -101,3 +101,15 @@ chmod +x /path/to/claude-cache-countdown/hooks/*.sh
 ## 5. Restart Claude Code
 
 Hooks are loaded at startup. Restart Claude Code after editing `~/.claude/settings.json` for the changes to take effect.
+
+## Uninstall
+
+`bash uninstall.sh` from the repo root reverses these steps for you. It:
+
+- Removes any Stop/UserPromptSubmit hook commands that reference `cache-timer-write.sh` or `cache-timer-resume.sh` (matched by basename, so manual installs from a different path are still cleaned up)
+- Restores the prior `statusLine` from `~/.claude/state/cache-countdown-original-statusline.txt` if it exists, otherwise removes the wrapper entry
+- Deletes `~/.claude/countdown.conf`, the timer files, PID files, the status line backup, and the debug log
+- Stops any running `cache-timer-bg.sh` processes
+- Leaves the repo clone alone
+
+Use `--dry-run` to preview the actions, or `--yes` to skip the interactive confirmation. The script does not delete `~/.claude/state/` itself, only this tool's files inside it.
