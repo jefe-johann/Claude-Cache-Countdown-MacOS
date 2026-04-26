@@ -1,41 +1,31 @@
-# Claude-cache-countdown
+# claude-cache-countdown
 
-Installed tool for tracking Anthropic prompt cache TTL across Claude Code sessions.
+Live countdown for Anthropic's prompt-cache TTL (5-min default, 1-hr on Max), surfaced in Claude Code's status line with a `$X.XX at risk` segment. macOS-first; Linux works but is lightly tested.
 
-## What's installed
+## Architecture
 
-- **Hooks** in `~/.claude/settings.json`: Stop hook writes timer state and launches background ticker; UserPromptSubmit hook resets the timer state
-- **Config** in `~/.claude/countdown.conf`: controls TTL and alert behavior
-- **Timer files**: written per-session to `~/.claude/state/cache-timer-{session_id}.json`
-- **Background ticker** (`hooks/cache-timer-bg.sh`): launched by the Stop hook, updates the Warp tab title with `⏱ M:SS` every second via terminal escape codes written to the real TTY device
+Three pieces communicate via per-session JSON at `~/.claude/state/cache-timer-{session_id}.json`:
 
-## How it works
+1. **Stop hook** — `hooks/cache-timer-write.sh`. Writes the timer file with `stopped=true` and launches the alert watcher.
+2. **UserPromptSubmit hook** — `hooks/cache-timer-resume.sh`. Flips the same file to `stopped=false` so the countdown disappears and any alert watcher exits.
+3. **Status line wrapper** — `hooks/statusline-cost.sh`. Runs every second via `statusLine.refreshInterval`, reads the timer file for the current `session_id`, and appends `⏱ M:SS cache` or `⚠️ Cache Expired` plus the at-risk cost/tokens.
+4. **Alert watcher** — `hooks/cache-alert-watch.sh`. Watches one stopped timer file and plays `ALERT_60S_SOUND` once when 60 seconds remain. It never writes to the TTY.
 
-1. Claude Code finishes responding → Stop hook writes `stopped=true` timer file, discovers TTY device (walks process tree for real `/dev/ttysXXX`), launches `cache-timer-bg.sh` in background
-2. Background ticker updates Warp tab title every second: `⏱ 4:59`, `⏱ 4:58`, ...
-3. Timer expires → ticker stops writing custom titles and Warp can reclaim the tab title
-4. User sends new prompt → UserPromptSubmit hook writes `stopped=false` and Warp takes the tab title back
+The status line wrapper still chains the user's existing `statusLine` command when one was backed up to `~/.claude/state/cache-countdown-original-statusline.txt`.
 
-## Why tab title, not status line
+## Files to know
 
-The Claude Code status line only re-runs on assistant messages, permission mode changes, and vim mode toggles. The Warp tab title is updated by a background process writing OSC escape codes (`\033]0;...\007`) directly to the TTY device.
+- `hooks/countdown-config.sh` — shared helpers used everywhere: `countdown_load_config`, `countdown_now_epoch_ns`, `countdown_iso_from_epoch_ns`, `countdown_debug_log`. Source this from any new script.
+- `install.sh` / `uninstall.sh` — wire/unwire everything into `~/.claude/settings.json`. Idempotent.
+- `~/.claude/countdown.conf` — user-facing config (TTL, display mode, alerts, debug). Loaded by `countdown_load_config`.
+- `docs/extending.md` — timer-file JSON schema and how to drive the countdown without Claude Code.
+- `docs/manual-install.md` — settings.json snippets for hand-wiring.
+- `README.md` — pricing math, troubleshooting, user-facing overview.
 
-## Key detail: TTY discovery
+## Gotchas
 
-Hook subprocesses have no controlling terminal (`/dev/tty` fails). Both hooks walk up the process tree via `ps -o tty=` to find the real TTY (e.g. `/dev/ttys003`) of the parent Claude/shell process and write there.
-
-## Status line: cost at risk
-
-`hooks/statusline-cost.sh` wraps the user's existing `statusLine` command and appends `$X.XX at risk` — the cost delta between a cache hit and a cache miss for the current context size.
-
-- Token data comes from `context_window.current_usage` in the statusLine JSON input
-- Pricing follows the configured TTL profile: 5-minute mode uses `$5.75/MTok` and `$11.50/MTok`; 1-hour mode uses `$9.50/MTok` and `$19.00/MTok`
-- The original statusLine command is backed up to `~/.claude/state/cache-countdown-original-statusline.txt` during install
-
-## Timer file format
-
-```json
-{"timestamp": "2026-04-09T23:14:13.000Z", "session_id": "...", "project": "...", "host_pid": 0, "stopped": true, "cwd": "..."}
-```
-
-Note: `host_pid` can be `0` when terminal detection fails. Stale timer files from closed sessions may accumulate in `~/.claude/state/` and can be deleted manually.
+- **Status line refresh**: installer must set `statusLine.refreshInterval` to `1`; without it the timer will not tick while Claude Code is idle.
+- **No TTY writes**: the migration intentionally avoids tab-title escapes, terminal bells, and Warp-specific OSC nudges. Keep alerts sound-file based.
+- **Alert watcher lifetime**: the watcher is short-lived and exits after playing once, when the timer file disappears, when `stopped=false`, or when the TTL expires.
+- **Pricing tiers in `statusline-cost.sh`**: Opus 4.6 has a hard cliff at 200K tokens. Rates are TTL-aware (5-min vs 1-hour profile) and tier-aware — keep both in sync if pricing changes.
+- **Stale state**: timer and alert PID files in `~/.claude/state/` accumulate from abrupt session ends. `uninstall.sh` cleans them; manual deletion is safe.

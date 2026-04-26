@@ -10,7 +10,7 @@ STATE_DIR="$HOME/.claude/state"
 STOP_HOOK="$SCRIPT_DIR/hooks/cache-timer-write.sh"
 RESUME_HOOK="$SCRIPT_DIR/hooks/cache-timer-resume.sh"
 STATUSLINE_HOOK="$SCRIPT_DIR/hooks/statusline-cost.sh"
-TICKER_HOOK="$SCRIPT_DIR/hooks/cache-timer-bg.sh"
+ALERT_HOOK="$SCRIPT_DIR/hooks/cache-alert-watch.sh"
 CONFIG_FILE="$HOME/.claude/countdown.conf"
 
 echo "Claude Cache Countdown Installer"
@@ -35,7 +35,7 @@ if ! command -v python3 &>/dev/null; then
     exit 1
 fi
 
-chmod +x "$STOP_HOOK" "$RESUME_HOOK" "$STATUSLINE_HOOK" "$TICKER_HOOK"
+chmod +x "$STOP_HOOK" "$RESUME_HOOK" "$STATUSLINE_HOOK" "$ALERT_HOOK"
 
 # Create state directory
 mkdir -p "$STATE_DIR"
@@ -43,7 +43,7 @@ mkdir -p "$STATE_DIR"
 echo "Stop hook:      $STOP_HOOK"
 echo "Resume hook:    $RESUME_HOOK"
 echo "Status line:    $STATUSLINE_HOOK"
-echo "Ticker:         $SCRIPT_DIR/hooks/cache-timer-bg.sh"
+echo "Alert watcher:  $ALERT_HOOK"
 echo "Config:         $CONFIG_FILE"
 echo ""
 
@@ -106,19 +106,32 @@ ENABLE_ALERTS=true
 # Sound file played once when 60 seconds remain.
 ALERT_60S_SOUND="/System/Library/Sounds/Glass.aiff"
 
-# Enable verbose hook/ticker logging while debugging.
+# Enable verbose hook and alert watcher logging while debugging.
 COUNTDOWN_DEBUG=false
 
 # Optional override for the debug log path.
 COUNTDOWN_DEBUG_LOG_FILE="$HOME/.claude/state/cache-countdown-debug.log"
-
-# In Warp, clear stale Claude permission titles before writing the countdown.
-WARP_AGENT_STATUS_NUDGE=true
 EOF
     echo "  Wrote $CONFIG_FILE"
 else
     echo "Keeping existing config at $CONFIG_FILE"
 fi
+
+echo "Stopping any legacy title tickers..."
+shopt -s nullglob
+for pidfile in "$STATE_DIR"/cache-timer-*.pid; do
+    [ -f "$pidfile" ] || continue
+    pid=$(cat "$pidfile" 2>/dev/null | tr -d '[:space:]')
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+        cmd=$(ps -o command= -p "$pid" 2>/dev/null || true)
+        if echo "$cmd" | grep -q "cache-timer-bg.sh"; then
+            kill "$pid" 2>/dev/null || true
+            echo "  Stopped legacy title ticker pid=$pid"
+        fi
+    fi
+    rm -f "$pidfile"
+done
+shopt -u nullglob
 
 # Add hooks to settings.json
 echo "Adding hooks to $SETTINGS_FILE..."
@@ -187,14 +200,22 @@ sl = settings.get("statusLine", {})
 current_sl_cmd = sl.get("command", "") if isinstance(sl, dict) else ""
 
 if "statusline-cost" in current_sl_cmd:
-    print("  Status line wrapper already installed.")
+    if not isinstance(sl, dict):
+        sl = {}
+    if sl.get("refreshInterval") != 1:
+        sl["refreshInterval"] = 1
+        settings["statusLine"] = sl
+        print("  Updated status line refreshInterval to 1 second.")
+        changed = True
+    else:
+        print("  Status line wrapper already installed.")
 else:
     if current_sl_cmd:
         os.makedirs(os.path.dirname(original_cmd_file), exist_ok=True)
         with open(original_cmd_file, "w", encoding="utf-8") as backup_file:
             backup_file.write(current_sl_cmd)
         print(f"  Backed up existing status line to {original_cmd_file}")
-    settings["statusLine"] = {"type": "command", "command": statusline_cmd}
+    settings["statusLine"] = {"type": "command", "command": statusline_cmd, "refreshInterval": 1}
     print("  Installed status line cost wrapper.")
     changed = True
 
@@ -209,7 +230,6 @@ PY
 echo ""
 echo "Installation complete!"
 echo ""
-echo "The background ticker starts automatically when Claude Code stops."
-echo "The countdown appears when a Claude Code session stops."
-echo "Warp reclaims the tab title when the countdown is not active."
+echo "The countdown appears in Claude Code's status line when a session stops."
+echo "A small alert watcher plays the 60-second sound when alerts are enabled."
 echo "Restart Claude Code to load the new hooks."

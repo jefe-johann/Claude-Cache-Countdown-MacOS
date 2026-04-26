@@ -6,8 +6,8 @@ If you prefer not to use the installer, you can wire up the hooks yourself. You'
 
 Two hooks are required:
 
-- **Stop** — writes the timer file and launches the background ticker when the agent finishes responding
-- **UserPromptSubmit** — resets the timer when you send a new message, handing title control back to Warp
+- **Stop** — writes the timer file and launches the alert watcher when the agent finishes responding
+- **UserPromptSubmit** — resets the timer when you send a new message
 
 Add both to `~/.claude/settings.json`, replacing `/path/to/claude-cache-countdown` with the actual path to your clone:
 
@@ -42,17 +42,18 @@ Add both to `~/.claude/settings.json`, replacing `/path/to/claude-cache-countdow
 }
 ```
 
-There is no separate ticker command to run — the Stop hook launches the background ticker automatically.
+There is no separate display process to run — Claude Code refreshes the status line. The Stop hook launches the alert watcher automatically when alerts are enabled.
 
 ## 2. Add the status line wrapper
 
-The status line wrapper appends the at-risk cost or token count to Claude Code's native bottom bar. Add it to `~/.claude/settings.json`:
+The status line wrapper appends the countdown and at-risk cost or token count to Claude Code's native bottom bar. Add it to `~/.claude/settings.json`:
 
 ```json
 {
   "statusLine": {
     "type": "command",
-    "command": "bash '/path/to/claude-cache-countdown/hooks/statusline-cost.sh'"
+    "command": "bash '/path/to/claude-cache-countdown/hooks/statusline-cost.sh'",
+    "refreshInterval": 1
   }
 }
 ```
@@ -80,14 +81,11 @@ ENABLE_ALERTS=true
 # Sound file played when 60 seconds remain. macOS only.
 ALERT_60S_SOUND="/System/Library/Sounds/Glass.aiff"
 
-# Enable verbose hook/ticker logging while debugging.
+# Enable verbose hook and alert watcher logging while debugging.
 COUNTDOWN_DEBUG=false
 
 # Optional override for the debug log path.
 COUNTDOWN_DEBUG_LOG_FILE="$HOME/.claude/state/cache-countdown-debug.log"
-
-# In Warp, clear stale Claude permission titles before writing the countdown.
-WARP_AGENT_STATUS_NUDGE=true
 ```
 
 See [Configure](../README.md#configure) in the main readme for what each option does.
@@ -109,7 +107,7 @@ Hooks are loaded at startup. Restart Claude Code after editing `~/.claude/settin
 - Removes any Stop/UserPromptSubmit hook commands that reference `cache-timer-write.sh` or `cache-timer-resume.sh` (matched by basename, so manual installs from a different path are still cleaned up)
 - Restores the prior `statusLine` from `~/.claude/state/cache-countdown-original-statusline.txt` if it exists, otherwise removes the wrapper entry
 - Deletes `~/.claude/countdown.conf`, the timer files, PID files, the status line backup, and the debug log
-- Stops any running `cache-timer-bg.sh` processes
+- Stops any running `cache-alert-watch.sh` processes and legacy `cache-timer-bg.sh` processes
 - Leaves the repo clone alone
 
 Use `--dry-run` to preview the actions, or `--yes` to skip the interactive confirmation. The script does not delete `~/.claude/state/` itself, only this tool's files inside it.

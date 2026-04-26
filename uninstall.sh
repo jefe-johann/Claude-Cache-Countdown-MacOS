@@ -48,9 +48,9 @@ echo ""
 echo "This will:"
 echo "  - Remove the project's Stop and UserPromptSubmit hooks from $SETTINGS_FILE"
 echo "  - Restore your prior statusLine command if a backup exists, otherwise remove ours"
-echo "  - Stop any running cache-timer-bg.sh processes started by this tool"
+echo "  - Stop any running cache-alert-watch.sh processes and legacy cache-timer-bg.sh processes started by this tool"
 echo "  - Delete $CONFIG_FILE"
-echo "  - Delete $STATE_DIR/cache-timer-*.json, *.pid, the original-statusline backup, and the debug log"
+echo "  - Delete $STATE_DIR/cache-timer-*.json, cache-alert-*.pid, legacy cache-timer-*.pid, the original-statusline backup, and the debug log"
 echo ""
 echo "It will NOT:"
 echo "  - Delete the repository clone"
@@ -267,7 +267,7 @@ elif [[ "$SETTINGS_STATUS" == write-error:* ]] || [[ "$SETTINGS_STATUS" == read-
 fi
 
 # ---------------------------------------------------------------------------
-# Process cleanup (kill background tickers)
+# Process cleanup (kill alert watchers and legacy title tickers)
 # ---------------------------------------------------------------------------
 
 PROCS_STOPPED=0
@@ -275,20 +275,33 @@ PIDS_REMOVED=0
 
 if [ -d "$STATE_DIR" ]; then
     shopt -s nullglob
-    for pidfile in "$STATE_DIR"/cache-timer-*.pid; do
+    for pidfile in "$STATE_DIR"/cache-alert-*.pid "$STATE_DIR"/cache-timer-*.pid; do
         [ -e "$pidfile" ] || continue
         pid=$(cat "$pidfile" 2>/dev/null | tr -d '[:space:]')
+        expected_cmd=""
+        label="process"
+        case "$(basename "$pidfile")" in
+            cache-alert-*.pid)
+                expected_cmd="cache-alert-watch.sh"
+                label="alert watcher"
+                ;;
+            cache-timer-*.pid)
+                expected_cmd="cache-timer-bg.sh"
+                label="legacy title ticker"
+                ;;
+        esac
+
         if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
             cmd=$(ps -o command= -p "$pid" 2>/dev/null || true)
-            if echo "$cmd" | grep -q "cache-timer-bg.sh"; then
+            if [ -n "$expected_cmd" ] && echo "$cmd" | grep -q "$expected_cmd"; then
                 if [ "$DRY_RUN" -eq 1 ]; then
-                    echo "${PREFIX}Would stop ticker pid=$pid"
+                    echo "${PREFIX}Would stop $label pid=$pid"
                 else
                     kill "$pid" 2>/dev/null || true
                 fi
                 PROCS_STOPPED=$((PROCS_STOPPED + 1))
             else
-                echo "  Skipping pid=$pid in $pidfile (command does not look like cache-timer-bg.sh)"
+                echo "  Skipping pid=$pid in $pidfile (command does not look like $expected_cmd)"
             fi
         fi
         if [ "$DRY_RUN" -eq 1 ]; then
@@ -391,7 +404,7 @@ echo "  Status line backup: $ORIGINAL_REMOVED"
 echo "  Debug log: $DEBUG_LOG_REMOVED"
 echo "  Timer files removed: $TIMER_FILES_REMOVED"
 echo "  PID files removed: $PIDS_REMOVED"
-echo "  Background tickers stopped: $PROCS_STOPPED"
+echo "  Background processes stopped: $PROCS_STOPPED"
 
 echo ""
 if [ "$DRY_RUN" -eq 1 ]; then
