@@ -1,3 +1,5 @@
+Note: if you happen to find this organically, this project is a work in progress, there are some kinks I'm still working out!
+
 # Claude Cache Countdown
 
 Live prompt cache TTL countdown for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) sessions.
