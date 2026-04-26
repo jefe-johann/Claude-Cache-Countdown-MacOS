@@ -53,11 +53,11 @@ echo "Claude Cache Countdown Uninstaller"
 echo "=================================="
 echo ""
 echo "This will:"
-echo "  - Remove the project's Stop and UserPromptSubmit hooks from $SETTINGS_FILE"
+echo "  - Remove the project's Stop, UserPromptSubmit, and SessionStart hooks from $SETTINGS_FILE"
 echo "  - Restore your prior statusLine command if a backup exists, otherwise remove ours"
-echo "  - Stop any running cache-alert-watch.sh processes and legacy cache-timer-bg.sh processes started by this tool"
+echo "  - Stop any legacy cache-alert-watch.sh and cache-timer-bg.sh processes started by older versions"
 echo "  - Delete $CONFIG_FILE"
-echo "  - Delete $STATE_DIR/cache-timer-*.json, cache-alert-*.pid, legacy cache-timer-*.pid, the original-statusline backup, and the debug log"
+echo "  - Delete $STATE_DIR/cache-timer-*.json, cache-alert-fired-*.flag, legacy cache-alert-*.pid and cache-timer-*.pid files, the original-statusline backup, and the debug log"
 echo ""
 echo "It will NOT:"
 echo "  - Delete the repository clone"
@@ -107,7 +107,11 @@ settings_path = os.environ["SETTINGS_FILE"]
 original_cmd_file = os.environ["ORIGINAL_CMD_FILE"]
 dry_run = os.environ.get("DRY_RUN", "0") == "1"
 
-OWNED_HOOK_BASENAMES = ("cache-timer-write.sh", "cache-timer-resume.sh")
+OWNED_HOOK_BASENAMES = (
+    "cache-timer-write.sh",
+    "cache-timer-resume.sh",
+    "cache-timer-clear.sh",
+)
 OWNED_STATUSLINE_BASENAME = "statusline-cost.sh"
 
 
@@ -215,6 +219,7 @@ def clean_hook_section(section_name: str) -> int:
 
 results["stop_removed"] = clean_hook_section("Stop")
 results["submit_removed"] = clean_hook_section("UserPromptSubmit")
+results["session_start_removed"] = clean_hook_section("SessionStart")
 
 # Drop empty top-level hooks object.
 if isinstance(settings.get("hooks"), dict) and not settings["hooks"]:
@@ -278,6 +283,7 @@ if [ -n "$SETTINGS_RESULT" ] && [ "$SETTINGS_RESULT" != "not-found" ]; then
             settings) SETTINGS_STATUS="$v" ;;
             stop_removed) STOP_REMOVED="$v" ;;
             submit_removed) SUBMIT_REMOVED="$v" ;;
+            session_start_removed) SESSION_START_REMOVED="$v" ;;
             statusline) STATUSLINE_RESULT="$v" ;;
             done) PYTHON_DONE="$v" ;;
         esac
@@ -285,7 +291,7 @@ if [ -n "$SETTINGS_RESULT" ] && [ "$SETTINGS_RESULT" != "not-found" ]; then
 
     if [ "$PYTHON_DONE" != "1" ]; then
         echo "  Warning: settings cleanup did not complete (python helper aborted before finishing)."
-        echo "  Inspect $SETTINGS_FILE and remove any remaining cache-timer-write.sh / cache-timer-resume.sh"
+        echo "  Inspect $SETTINGS_FILE and remove any remaining cache-timer-write.sh / cache-timer-resume.sh / cache-timer-clear.sh"
         echo "  hooks and the statusline-cost.sh statusLine entry by hand."
         SETTINGS_STATUS="incomplete"
         EXIT_CODE=1
@@ -294,7 +300,7 @@ fi
 
 if [ "$SETTINGS_STATUS" = "invalid-json" ]; then
     echo "  Warning: $SETTINGS_FILE is not valid JSON; settings were not modified."
-    echo "  Remove the Stop/UserPromptSubmit hook entries that reference cache-timer-write.sh and cache-timer-resume.sh by hand,"
+    echo "  Remove the Stop/UserPromptSubmit/SessionStart hook entries that reference cache-timer-{write,resume,clear}.sh by hand,"
     echo "  and the statusLine entry that references statusline-cost.sh."
     EXIT_CODE=1
 elif [[ "$SETTINGS_STATUS" == write-error:* ]] || [[ "$SETTINGS_STATUS" == read-error:* ]] || [ "$SETTINGS_STATUS" = "invalid-shape" ]; then
@@ -408,6 +414,7 @@ if [ -f "$DEBUG_LOG_FILE" ]; then
 fi
 
 TIMER_FILES_REMOVED=0
+ALERT_MARKERS_REMOVED=0
 if [ -d "$STATE_DIR" ]; then
     shopt -s nullglob
     for f in "$STATE_DIR"/cache-timer-*.json; do
@@ -418,6 +425,15 @@ if [ -d "$STATE_DIR" ]; then
             rm -f "$f"
         fi
         TIMER_FILES_REMOVED=$((TIMER_FILES_REMOVED + 1))
+    done
+    for f in "$STATE_DIR"/cache-alert-fired-*.flag; do
+        [ -e "$f" ] || continue
+        if [ "$DRY_RUN" -eq 1 ]; then
+            echo "${PREFIX}Would remove $f"
+        else
+            rm -f "$f"
+        fi
+        ALERT_MARKERS_REMOVED=$((ALERT_MARKERS_REMOVED + 1))
     done
     shopt -u nullglob
 fi
@@ -451,6 +467,11 @@ case "$SETTINGS_STATUS" in
             echo "  UserPromptSubmit hook commands $verb_removed: $SUBMIT_REMOVED"
         else
             echo "  UserPromptSubmit hook: not found"
+        fi
+        if [ "${SESSION_START_REMOVED:-0}" -gt 0 ]; then
+            echo "  SessionStart hook commands $verb_removed: $SESSION_START_REMOVED"
+        else
+            echo "  SessionStart hook: not found"
         fi
         case "$STATUSLINE_RESULT" in
             restored) echo "  Status line: $verb_restored from backup" ;;
@@ -488,6 +509,7 @@ else
     echo "  Debug log: not-found"
 fi
 echo "  Timer files $verb_removed: $TIMER_FILES_REMOVED"
+echo "  Alert markers $verb_removed: $ALERT_MARKERS_REMOVED"
 echo "  PID files $verb_removed: $PIDS_REMOVED"
 if [ "$PIDS_KEPT" -gt 0 ]; then
     echo "  PID files left in place (pid alive, command unrecognized): $PIDS_KEPT"

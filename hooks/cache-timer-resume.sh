@@ -39,8 +39,12 @@ STATE_DIR="$HOME/.claude/state"
 mkdir -p "$STATE_DIR"
 
 TIMER_FILE="$STATE_DIR/cache-timer-${SESSION_ID}.json"
+ALERT_MARKER="$STATE_DIR/cache-alert-fired-${SESSION_ID}.flag"
 TIMESTAMP_EPOCH_NS=$(countdown_now_epoch_ns)
 TIMESTAMP=$(countdown_iso_from_epoch_ns "$TIMESTAMP_EPOCH_NS")
+
+# Clear the alert marker so the next Stop cycle can fire fresh.
+rm -f "$ALERT_MARKER" 2>/dev/null || true
 
 # Read existing fields if file exists, preserve them
 HOST_PID=0
@@ -107,7 +111,9 @@ if [ "$HOST_PID" -ne 0 ]; then
         [ "$(basename "$f")" = "cache-timer-${SESSION_ID}.json" ] && continue
         other_pid=$(grep -o '"host_pid":[0-9]*' "$f" 2>/dev/null | grep -o '[0-9]*' || true)
         if [ "$other_pid" = "$HOST_PID" ]; then
-            rm -f "$f" 2>/dev/null
+            stale_session=$(basename "$f" .json)
+            stale_session="${stale_session#cache-timer-}"
+            rm -f "$f" "$STATE_DIR/cache-alert-fired-${stale_session}.flag" 2>/dev/null
             countdown_debug_log resume "removed stale timer file session=$SESSION_ID stale=$(basename "$f") host_pid=$HOST_PID"
         fi
     done
