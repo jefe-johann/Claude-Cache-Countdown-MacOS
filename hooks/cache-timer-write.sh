@@ -9,6 +9,12 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# shellcheck source=hooks/countdown-config.sh
+. "$SCRIPT_DIR/countdown-config.sh"
+countdown_load_config
+
 # Read hook input from stdin
 INPUT=$(cat)
 
@@ -69,6 +75,7 @@ fi
 # Write timer file
 printf '{"timestamp":"%s","session_id":"%s","project":"%s","host_pid":%d,"stopped":true,"cwd":"%s"}' \
     "$TIMESTAMP" "$SESSION_ID" "$PROJECT" "$HOST_PID" "${CWD_JSON:-}" > "$TIMER_FILE"
+countdown_debug_log stop "wrote timer session=$SESSION_ID project=$PROJECT host_pid=$HOST_PID file=$TIMER_FILE"
 
 # Check if ticker is already running for this session
 PID_FILE="$STATE_DIR/cache-timer-${SESSION_ID}.pid"
@@ -77,8 +84,10 @@ if [ -f "$PID_FILE" ]; then
     _old_pid=$(cat "$PID_FILE" 2>/dev/null)
     if [ -n "$_old_pid" ] && kill -0 "$_old_pid" 2>/dev/null; then
         _ticker_running=true
+        countdown_debug_log stop "ticker already running session=$SESSION_ID pid=$_old_pid"
     else
         rm -f "$PID_FILE"
+        countdown_debug_log stop "removed stale pid file session=$SESSION_ID pid=${_old_pid:-unknown}"
     fi
 fi
 
@@ -118,12 +127,19 @@ done
 
 # Launch background ticker if not already running for this session
 if [ -n "$_tty" ] && [ -w "$_tty" ]; then
+    # Warp's Claude integration can occasionally hold onto a stale
+    # "Wants to run ..." agent title. Send the same structured stop event
+    # Warp's plugin uses, but through the real TTY we discovered above.
+    countdown_warp_agent_stop_notify "$_tty" "$SESSION_ID" "$CWD" "$PROJECT"
+
     if [ "$_ticker_running" = "false" ]; then
         _kill_stale_tickers "$_tty"
-        SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
         nohup env WARP_DISABLE_AUTO_TITLE=true bash "$SCRIPT_DIR/cache-timer-bg.sh" "$SESSION_ID" "$_tty" </dev/null >/dev/null 2>&1 &
         disown
+        countdown_debug_log stop "launched ticker session=$SESSION_ID tty=$_tty warp_disable_auto_title=true"
     fi
+else
+    countdown_debug_log stop "no writable tty found session=$SESSION_ID tty=${_tty:-missing}"
 fi
 
 exit 0

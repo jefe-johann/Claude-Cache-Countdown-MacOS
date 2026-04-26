@@ -105,6 +105,15 @@ ENABLE_ALERTS=true
 
 # Sound file played once when 60 seconds remain.
 ALERT_60S_SOUND="/System/Library/Sounds/Glass.aiff"
+
+# Enable verbose hook/ticker logging while debugging.
+COUNTDOWN_DEBUG=false
+
+# Optional override for the debug log path.
+COUNTDOWN_DEBUG_LOG_FILE="$HOME/.claude/state/cache-countdown-debug.log"
+
+# In Warp, clear stale Claude permission titles before writing the countdown.
+WARP_AGENT_STATUS_NUDGE=true
 EOF
     echo "  Wrote $CONFIG_FILE"
 else

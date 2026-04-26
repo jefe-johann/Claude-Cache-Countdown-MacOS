@@ -13,6 +13,12 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# shellcheck source=hooks/countdown-config.sh
+. "$SCRIPT_DIR/countdown-config.sh"
+countdown_load_config
+
 INPUT=$(cat)
 
 SESSION_ID=$(echo "$INPUT" | grep -o '"session_id":"[^"]*"' | head -1 | cut -d'"' -f4)
@@ -51,6 +57,7 @@ FINAL_CWD="${CWD_JSON:-$EXISTING_CWD}"
 # Write timer file with stopped=false FIRST (before any PID discovery)
 printf '{"timestamp":"%s","session_id":"%s","project":"%s","host_pid":%d,"stopped":false,"cwd":"%s"}' \
     "$TIMESTAMP" "$SESSION_ID" "$PROJECT" "$HOST_PID" "$FINAL_CWD" > "$TIMER_FILE"
+countdown_debug_log resume "marked active session=$SESSION_ID project=$PROJECT host_pid=$HOST_PID"
 
 # Best-effort: discover host PID if not already known
 if [ "$HOST_PID" -eq 0 ]; then
@@ -84,6 +91,7 @@ if [ "$HOST_PID" -eq 0 ]; then
     if [ "$HOST_PID" -ne 0 ]; then
         printf '{"timestamp":"%s","session_id":"%s","project":"%s","host_pid":%d,"stopped":false,"cwd":"%s"}' \
             "$TIMESTAMP" "$SESSION_ID" "$PROJECT" "$HOST_PID" "$FINAL_CWD" > "$TIMER_FILE"
+        countdown_debug_log resume "updated host pid session=$SESSION_ID host_pid=$HOST_PID"
     fi
 fi
 
@@ -95,6 +103,7 @@ if [ "$HOST_PID" -ne 0 ]; then
         other_pid=$(grep -o '"host_pid":[0-9]*' "$f" 2>/dev/null | grep -o '[0-9]*' || true)
         if [ "$other_pid" = "$HOST_PID" ]; then
             rm -f "$f" 2>/dev/null
+            countdown_debug_log resume "removed stale timer file session=$SESSION_ID stale=$(basename "$f") host_pid=$HOST_PID"
         fi
     done
 fi

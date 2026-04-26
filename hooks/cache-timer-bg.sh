@@ -24,6 +24,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # shellcheck source=hooks/countdown-config.sh
 . "$SCRIPT_DIR/countdown-config.sh"
+countdown_load_config
 
 [ -f "$TIMER_FILE" ] || exit 0
 
@@ -38,9 +39,13 @@ START_EPOCH=$(date -u +%s)
 
 echo $$ > "$PID_FILE"
 trap 'rm -f "$PID_FILE"' EXIT
+countdown_debug_log bg "start session=$SESSION_ID tty=$TTY_DEV timer_file=$TIMER_FILE warp_disable_auto_title=${WARP_DISABLE_AUTO_TITLE:-unset}"
 
 # Sound alert state — fires once per countdown
 _beeped_60=false
+_last_phase=""
+_last_bucket=""
+_sent_warp_stop=false
 
 _alert_60s() {
     if [ "$ENABLE_ALERTS" != "true" ]; then
@@ -58,7 +63,10 @@ _write_title() {
     local title="$1"
     # Emit both common title channels so Warp's newer session UIs have the
     # best chance of picking up the countdown label.
-    printf '\033]0;%s\007\033]2;%s\007' "$title" "$title" > "$TTY_DEV" 2>/dev/null || exit 0
+    if ! printf '\033]0;%s\007\033]2;%s\007' "$title" "$title" > "$TTY_DEV" 2>/dev/null; then
+        countdown_debug_log bg "title write failed session=$SESSION_ID tty=$TTY_DEV title=$title"
+        exit 0
+    fi
 }
 
 _mtime_epoch() {
@@ -95,6 +103,7 @@ while true; do
             [ "$(basename "$_jf" .jsonl)" = "$SESSION_ID" ] && continue
             _mtime=$(_mtime_epoch "$_jf" 2>/dev/null) || continue
             if [ "$_mtime" -gt "$START_EPOCH" ]; then
+                countdown_debug_log bg "exit on clear session=$SESSION_ID tty=$TTY_DEV"
                 exit 0
             fi
         done
@@ -106,6 +115,12 @@ while true; do
     if [ "$stopped" = "false" ]; then
         # Claude is working — reset alert state for next countdown
         _beeped_60=false
+        _sent_warp_stop=false
+        if [ "$_last_phase" != "active" ]; then
+            _last_phase="active"
+            _last_bucket=""
+            countdown_debug_log bg "active session=$SESSION_ID tty=$TTY_DEV"
+        fi
     else
         # Claude stopped — show countdown while cache is still active
         ts=$(grep -o '"timestamp":"[^"]*"' "$TIMER_FILE" 2>/dev/null | cut -d'"' -f4 || echo "")
@@ -114,9 +129,20 @@ while true; do
             now=$(date -u +%s)
             remaining=$(( CACHE_TTL_SECONDS - (now - ts_epoch) ))
             if [ "$remaining" -gt 0 ]; then
+                _bucket=$(( remaining / 15 ))
+                if [ "$_last_phase" != "countdown" ] || [ "$_last_bucket" != "$_bucket" ]; then
+                    _last_phase="countdown"
+                    _last_bucket="$_bucket"
+                    countdown_debug_log bg "countdown session=$SESSION_ID tty=$TTY_DEV remaining=$remaining"
+                fi
+                if [ "$_sent_warp_stop" = "false" ]; then
+                    _sent_warp_stop=true
+                    countdown_warp_agent_stop_notify "$TTY_DEV" "$SESSION_ID" "$_cwd" "$project"
+                fi
                 if [ "$remaining" -le 60 ] && [ "$_beeped_60" = "false" ]; then
                     _beeped_60=true
                     _alert_60s
+                    countdown_debug_log bg "alert-60s session=$SESSION_ID tty=$TTY_DEV"
                 fi
 
                 mins=$(( remaining / 60 ))
@@ -126,6 +152,10 @@ while true; do
                 else
                     _write_title "$(printf '⏱ %d:%02d' "$mins" "$secs")"
                 fi
+            elif [ "$_last_phase" != "expired" ]; then
+                _last_phase="expired"
+                _last_bucket=""
+                countdown_debug_log bg "expired session=$SESSION_ID tty=$TTY_DEV"
             fi
         fi
     fi
