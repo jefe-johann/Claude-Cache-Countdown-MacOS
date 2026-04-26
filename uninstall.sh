@@ -16,11 +16,11 @@ DRY_RUN=0
 
 usage() {
     cat <<USAGE
-Usage: bash uninstall.sh [--yes] [--dry-run]
+Usage: bash uninstall.sh [--yes|-y] [--dry-run|-n]
 
-  --yes      Skip the confirmation prompt.
-  --dry-run  Print the actions that would be taken; change nothing.
-  -h, --help Show this message.
+  --yes, -y      Skip the confirmation prompt.
+  --dry-run, -n  Print the actions that would be taken; change nothing.
+  -h, --help     Show this message.
 USAGE
 }
 
@@ -99,6 +99,7 @@ if [ -f "$SETTINGS_FILE" ]; then
         python3 <<'PY'
 import json
 import os
+import shlex
 import sys
 import tempfile
 
@@ -108,6 +109,17 @@ dry_run = os.environ.get("DRY_RUN", "0") == "1"
 
 OWNED_HOOK_BASENAMES = ("cache-timer-write.sh", "cache-timer-resume.sh")
 OWNED_STATUSLINE_BASENAME = "statusline-cost.sh"
+
+
+def _command_basenames(cmd: str):
+    """Yield the basename of every shell-token in cmd. Falls back to whitespace
+    split when shlex can't parse (e.g. unbalanced quotes in user-edited JSON)."""
+    try:
+        tokens = shlex.split(cmd)
+    except ValueError:
+        tokens = cmd.split()
+    for tok in tokens:
+        yield os.path.basename(tok)
 
 results = {
     "settings": "ok",
@@ -146,7 +158,11 @@ changed = False
 
 
 def is_owned_hook_command(cmd: str) -> bool:
-    return any(name in cmd for name in OWNED_HOOK_BASENAMES)
+    # Match the basename of an actual command-line token rather than a raw
+    # substring of the command string. This avoids false positives on suffixed
+    # variants like cache-timer-write.sh.bak or paths that happen to embed our
+    # script name (e.g. "/opt/cache-timer-write.sh.disabled-2024").
+    return any(b in OWNED_HOOK_BASENAMES for b in _command_basenames(cmd))
 
 
 def clean_hook_section(section_name: str) -> int:
@@ -209,7 +225,7 @@ if isinstance(settings.get("hooks"), dict) and not settings["hooks"]:
 sl = settings.get("statusLine")
 if isinstance(sl, dict):
     current_cmd = sl.get("command", "") or ""
-    if OWNED_STATUSLINE_BASENAME in current_cmd:
+    if any(b == OWNED_STATUSLINE_BASENAME for b in _command_basenames(current_cmd)):
         original_cmd = ""
         if os.path.isfile(original_cmd_file):
             try:
@@ -361,34 +377,34 @@ fi
 # File cleanup
 # ---------------------------------------------------------------------------
 
-CONFIG_REMOVED="not-found"
+CONFIG_FOUND=0
 if [ -f "$CONFIG_FILE" ]; then
+    CONFIG_FOUND=1
     if [ "$DRY_RUN" -eq 1 ]; then
         echo "${PREFIX}Would remove $CONFIG_FILE"
     else
         rm -f "$CONFIG_FILE"
     fi
-    CONFIG_REMOVED="removed"
 fi
 
-ORIGINAL_REMOVED="not-found"
+ORIGINAL_FOUND=0
 if [ -f "$ORIGINAL_CMD_FILE" ]; then
+    ORIGINAL_FOUND=1
     if [ "$DRY_RUN" -eq 1 ]; then
         echo "${PREFIX}Would remove $ORIGINAL_CMD_FILE"
     else
         rm -f "$ORIGINAL_CMD_FILE"
     fi
-    ORIGINAL_REMOVED="removed"
 fi
 
-DEBUG_LOG_REMOVED="not-found"
+DEBUG_LOG_FOUND=0
 if [ -f "$DEBUG_LOG_FILE" ]; then
+    DEBUG_LOG_FOUND=1
     if [ "$DRY_RUN" -eq 1 ]; then
         echo "${PREFIX}Would remove $DEBUG_LOG_FILE"
     else
         rm -f "$DEBUG_LOG_FILE"
     fi
-    DEBUG_LOG_REMOVED="removed"
 fi
 
 TIMER_FILES_REMOVED=0
@@ -410,24 +426,35 @@ fi
 # Summary
 # ---------------------------------------------------------------------------
 
+# Verb form depends on whether we're reporting completed work or projected work.
+if [ "$DRY_RUN" -eq 1 ]; then
+    verb_removed="would be removed"
+    verb_stopped="would be stopped"
+    verb_restored="would be restored"
+else
+    verb_removed="removed"
+    verb_stopped="stopped"
+    verb_restored="restored"
+fi
+
 echo ""
 echo "Summary"
 echo "-------"
 case "$SETTINGS_STATUS" in
     ok)
         if [ "$STOP_REMOVED" -gt 0 ]; then
-            echo "  Stop hook commands removed: $STOP_REMOVED"
+            echo "  Stop hook commands $verb_removed: $STOP_REMOVED"
         else
             echo "  Stop hook: not found"
         fi
         if [ "$SUBMIT_REMOVED" -gt 0 ]; then
-            echo "  UserPromptSubmit hook commands removed: $SUBMIT_REMOVED"
+            echo "  UserPromptSubmit hook commands $verb_removed: $SUBMIT_REMOVED"
         else
             echo "  UserPromptSubmit hook: not found"
         fi
         case "$STATUSLINE_RESULT" in
-            restored) echo "  Status line: restored from backup" ;;
-            removed)  echo "  Status line: removed (no backup found)" ;;
+            restored) echo "  Status line: $verb_restored from backup" ;;
+            removed)  echo "  Status line: $verb_removed (no backup found)" ;;
             unchanged) echo "  Status line: left unchanged (does not point at this tool)" ;;
         esac
         ;;
@@ -445,15 +472,27 @@ case "$SETTINGS_STATUS" in
         ;;
 esac
 
-echo "  Config file ($CONFIG_FILE): $CONFIG_REMOVED"
-echo "  Status line backup: $ORIGINAL_REMOVED"
-echo "  Debug log: $DEBUG_LOG_REMOVED"
-echo "  Timer files removed: $TIMER_FILES_REMOVED"
-echo "  PID files removed: $PIDS_REMOVED"
+if [ "$CONFIG_FOUND" -eq 1 ]; then
+    echo "  Config file ($CONFIG_FILE): $verb_removed"
+else
+    echo "  Config file ($CONFIG_FILE): not-found"
+fi
+if [ "$ORIGINAL_FOUND" -eq 1 ]; then
+    echo "  Status line backup: $verb_removed"
+else
+    echo "  Status line backup: not-found"
+fi
+if [ "$DEBUG_LOG_FOUND" -eq 1 ]; then
+    echo "  Debug log: $verb_removed"
+else
+    echo "  Debug log: not-found"
+fi
+echo "  Timer files $verb_removed: $TIMER_FILES_REMOVED"
+echo "  PID files $verb_removed: $PIDS_REMOVED"
 if [ "$PIDS_KEPT" -gt 0 ]; then
     echo "  PID files left in place (pid alive, command unrecognized): $PIDS_KEPT"
 fi
-echo "  Background processes stopped: $PROCS_STOPPED"
+echo "  Background processes $verb_stopped: $PROCS_STOPPED"
 
 echo ""
 if [ "$DRY_RUN" -eq 1 ]; then
