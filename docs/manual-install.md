@@ -4,12 +4,13 @@ If you prefer not to use the installer, you can wire up the hooks yourself. You'
 
 ## 1. Add the hooks
 
-Two hooks are required:
+Three hooks are required:
 
-- **Stop** — writes the timer file and launches the alert watcher when the agent finishes responding
-- **UserPromptSubmit** — resets the timer when you send a new message
+- **Stop** — writes the timer file when the agent finishes responding
+- **UserPromptSubmit** — resets the timer (and the alert marker) when you send a new message
+- **SessionStart** — drops the timer file and alert marker when you run `/clear`, so the now-invalidated cache stops driving the countdown and the alert. The script no-ops for `startup` and `resume`.
 
-Add both to `~/.claude/settings.json`, replacing `/path/to/claude-cache-countdown` with the actual path to your clone:
+Add all three to `~/.claude/settings.json`, replacing `/path/to/claude-cache-countdown` with the actual path to your clone:
 
 ```json
 {
@@ -37,12 +38,24 @@ Add both to `~/.claude/settings.json`, replacing `/path/to/claude-cache-countdow
           }
         ]
       }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash '/path/to/claude-cache-countdown/hooks/cache-timer-clear.sh'",
+            "timeout": 5
+          }
+        ]
+      }
     ]
   }
 }
 ```
 
-There is no separate display process to run — Claude Code refreshes the status line. The Stop hook launches the alert watcher automatically when alerts are enabled.
+There is no separate display or alert process to run — Claude Code refreshes the status line every second, and the status line plays the 60-second sound itself when alerts are enabled.
 
 ## 2. Add the status line wrapper
 
@@ -81,7 +94,7 @@ ENABLE_ALERTS=true
 # Sound file played when 60 seconds remain. macOS only.
 ALERT_60S_SOUND="/System/Library/Sounds/Glass.aiff"
 
-# Enable verbose hook and alert watcher logging while debugging.
+# Enable verbose hook logging while debugging.
 COUNTDOWN_DEBUG=false
 
 # Optional override for the debug log path.
@@ -104,10 +117,10 @@ Hooks are loaded at startup. Restart Claude Code after editing `~/.claude/settin
 
 `bash uninstall.sh` from the repo root reverses these steps for you. It:
 
-- Removes any Stop/UserPromptSubmit hook commands that reference `cache-timer-write.sh` or `cache-timer-resume.sh` (matched by basename, so manual installs from a different path are still cleaned up)
+- Removes any Stop/UserPromptSubmit/SessionStart hook commands that reference `cache-timer-write.sh`, `cache-timer-resume.sh`, or `cache-timer-clear.sh` (matched by basename, so manual installs from a different path are still cleaned up)
 - Restores the prior `statusLine` from `~/.claude/state/cache-countdown-original-statusline.txt` if it exists, otherwise removes the wrapper entry
-- Deletes `~/.claude/countdown.conf`, the timer files, PID files, the status line backup, and the debug log
-- Stops any running `cache-alert-watch.sh` processes and legacy `cache-timer-bg.sh` processes
+- Deletes `~/.claude/countdown.conf`, the timer files, alert markers, legacy PID files, the status line backup, and the debug log
+- Stops any leftover `cache-alert-watch.sh` or `cache-timer-bg.sh` processes from older versions
 - Leaves the repo clone alone
 
 Use `--dry-run` to preview the actions, or `--yes` to skip the interactive confirmation. The script does not delete `~/.claude/state/` itself, only this tool's files inside it.

@@ -9,8 +9,8 @@ SETTINGS_FILE="$HOME/.claude/settings.json"
 STATE_DIR="$HOME/.claude/state"
 STOP_HOOK="$SCRIPT_DIR/hooks/cache-timer-write.sh"
 RESUME_HOOK="$SCRIPT_DIR/hooks/cache-timer-resume.sh"
+CLEAR_HOOK="$SCRIPT_DIR/hooks/cache-timer-clear.sh"
 STATUSLINE_HOOK="$SCRIPT_DIR/hooks/statusline-cost.sh"
-ALERT_HOOK="$SCRIPT_DIR/hooks/cache-alert-watch.sh"
 CONFIG_FILE="$HOME/.claude/countdown.conf"
 
 echo "Claude Cache Countdown Installer"
@@ -36,7 +36,7 @@ if ! command -v python3 &>/dev/null; then
 fi
 
 missing_hooks=()
-for hook in "$STOP_HOOK" "$RESUME_HOOK" "$STATUSLINE_HOOK" "$ALERT_HOOK"; do
+for hook in "$STOP_HOOK" "$RESUME_HOOK" "$CLEAR_HOOK" "$STATUSLINE_HOOK"; do
     [ -f "$hook" ] || missing_hooks+=("$hook")
 done
 if [ "${#missing_hooks[@]}" -gt 0 ]; then
@@ -48,16 +48,16 @@ if [ "${#missing_hooks[@]}" -gt 0 ]; then
     exit 1
 fi
 
-chmod +x "$STOP_HOOK" "$RESUME_HOOK" "$STATUSLINE_HOOK" "$ALERT_HOOK"
+chmod +x "$STOP_HOOK" "$RESUME_HOOK" "$CLEAR_HOOK" "$STATUSLINE_HOOK"
 
 # Create state directory
 mkdir -p "$STATE_DIR"
 
-echo "Stop hook:      $STOP_HOOK"
-echo "Resume hook:    $RESUME_HOOK"
-echo "Status line:    $STATUSLINE_HOOK"
-echo "Alert watcher:  $ALERT_HOOK   (launched on demand by Stop hook; not wired into settings.json)"
-echo "Config:         $CONFIG_FILE"
+echo "Stop hook:        $STOP_HOOK"
+echo "Resume hook:      $RESUME_HOOK"
+echo "SessionStart:     $CLEAR_HOOK"
+echo "Status line:      $STATUSLINE_HOOK"
+echo "Config:           $CONFIG_FILE"
 echo
 
 # Check if settings.json exists
@@ -121,7 +121,7 @@ ENABLE_ALERTS=true
 # Sound file played once when 60 seconds remain.
 ALERT_60S_SOUND="/System/Library/Sounds/Glass.aiff"
 
-# Enable verbose hook and alert watcher logging while debugging.
+# Enable verbose hook logging while debugging.
 COUNTDOWN_DEBUG=false
 
 # Optional override for the debug log path.
@@ -134,16 +134,16 @@ else
     echo "Keeping existing config at $CONFIG_FILE"
 fi
 
-echo "Stopping any legacy title tickers..."
+echo "Stopping any legacy background processes..."
 shopt -s nullglob
-for pidfile in "$STATE_DIR"/cache-timer-*.pid; do
+for pidfile in "$STATE_DIR"/cache-timer-*.pid "$STATE_DIR"/cache-alert-*.pid; do
     [ -f "$pidfile" ] || continue
     pid=$(cat "$pidfile" 2>/dev/null | tr -d '[:space:]')
     if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
         cmd=$(ps -o command= -p "$pid" 2>/dev/null || true)
-        if echo "$cmd" | grep -q "cache-timer-bg.sh"; then
+        if echo "$cmd" | grep -qE "cache-timer-bg\.sh|cache-alert-watch\.sh"; then
             kill "$pid" 2>/dev/null || true
-            echo "  Stopped legacy title ticker pid=$pid"
+            echo "  Stopped legacy process pid=$pid"
         fi
     fi
     rm -f "$pidfile"
@@ -155,6 +155,7 @@ echo "Adding hooks to $SETTINGS_FILE..."
 SETTINGS_FILE="$SETTINGS_FILE" \
 STOP_HOOK="$STOP_HOOK" \
 RESUME_HOOK="$RESUME_HOOK" \
+CLEAR_HOOK="$CLEAR_HOOK" \
 STATUSLINE_HOOK="$STATUSLINE_HOOK" \
 ORIGINAL_CMD_FILE="$STATE_DIR/cache-countdown-original-statusline.txt" \
 python3 <<'PY'
@@ -166,6 +167,7 @@ import sys
 settings_path = os.environ["SETTINGS_FILE"]
 stop_cmd = f"bash {shlex.quote(os.environ['STOP_HOOK'])}"
 resume_cmd = f"bash {shlex.quote(os.environ['RESUME_HOOK'])}"
+clear_cmd = f"bash {shlex.quote(os.environ['CLEAR_HOOK'])}"
 statusline_cmd = f"bash {shlex.quote(os.environ['STATUSLINE_HOOK'])}"
 original_cmd_file = os.environ["ORIGINAL_CMD_FILE"]
 
@@ -232,6 +234,13 @@ _wire_hook(
     "UserPromptSubmit hook",
     5,
 )
+_wire_hook(
+    hooks.setdefault("SessionStart", []),
+    "cache-timer-clear",
+    clear_cmd,
+    "SessionStart hook",
+    5,
+)
 
 # Add status line wrapper
 sl = settings.get("statusLine", {})
@@ -294,7 +303,7 @@ echo
 echo "Installation complete!"
 echo
 echo "The countdown appears in Claude Code's status line when a session stops."
-echo "A small alert watcher plays the 60-second sound when alerts are enabled."
+echo "The status line also plays the 60-second sound when alerts are enabled."
 echo
 echo "Tune behavior (TTL, alerts, sound, debug) in:"
 echo "  $CONFIG_FILE"

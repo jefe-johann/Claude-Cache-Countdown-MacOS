@@ -10,8 +10,6 @@
 set -euo pipefail
 
 # $PPID here is the Claude CLI process that invoked this hook.
-# Captured up front so the alert watcher can later check whether Claude
-# is still running (e.g. user typed /quit) and exit if not.
 CLAUDE_PID="${PPID:-0}"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -82,31 +80,5 @@ fi
 printf '{"timestamp":"%s","timestamp_epoch_ns":%s,"session_id":"%s","project":"%s","host_pid":%d,"claude_pid":%d,"stopped":true,"cwd":"%s"}' \
     "$TIMESTAMP" "$TIMESTAMP_EPOCH_NS" "$SESSION_ID" "$PROJECT" "$HOST_PID" "$CLAUDE_PID" "${CWD_JSON:-}" > "$TIMER_FILE"
 countdown_debug_log stop "wrote timer session=$SESSION_ID project=$PROJECT host_pid=$HOST_PID claude_pid=$CLAUDE_PID file=$TIMER_FILE"
-
-# Launch alert watcher if not already running for this session.
-ALERT_PID_FILE="$STATE_DIR/cache-alert-${SESSION_ID}.pid"
-_alert_running=false
-if [ -f "$ALERT_PID_FILE" ]; then
-    _old_pid=$(cat "$ALERT_PID_FILE" 2>/dev/null)
-    if [ -n "$_old_pid" ] && kill -0 "$_old_pid" 2>/dev/null; then
-        _cmdline=$(ps -o args= -p "$_old_pid" 2>/dev/null || true)
-        if echo "$_cmdline" | grep -q "cache-alert-watch.sh.*$SESSION_ID"; then
-            _alert_running=true
-            countdown_debug_log stop "alert watcher already running session=$SESSION_ID pid=$_old_pid"
-        else
-            rm -f "$ALERT_PID_FILE"
-            countdown_debug_log stop "removed mismatched alert pid file session=$SESSION_ID pid=$_old_pid"
-        fi
-    else
-        rm -f "$ALERT_PID_FILE"
-        countdown_debug_log stop "removed stale alert pid file session=$SESSION_ID pid=${_old_pid:-unknown}"
-    fi
-fi
-
-if [ "$_alert_running" = "false" ]; then
-    nohup bash "$SCRIPT_DIR/cache-alert-watch.sh" "$SESSION_ID" </dev/null >/dev/null 2>&1 &
-    disown
-    countdown_debug_log stop "launched alert watcher session=$SESSION_ID"
-fi
 
 exit 0

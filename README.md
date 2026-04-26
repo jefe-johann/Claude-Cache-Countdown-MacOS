@@ -21,7 +21,7 @@ This tool puts the countdown in Claude Code's status line so you never get surpr
 - **Configurable alerts** — optional sound when 60 seconds remain.
 - **Multi-session aware** — tracks separate countdowns across multiple Claude Code tabs.
 - **Terminal-friendly** — does not write tab titles, terminal bells, or terminal escape codes.
-- **No daemon** — the alert watcher only runs during a stopped countdown, then exits.
+- **No daemon** — everything runs from Claude Code's hooks and status line refresh; no background processes.
 
 Built and used on macOS. Linux should work in theory but is currently untested.
 
@@ -44,7 +44,7 @@ If you'd rather wire things up by hand, see [docs/manual-install.md](docs/manual
 bash uninstall.sh
 ```
 
-Removes the project's hooks and config, deletes timer files and the debug log, and stops any alert watcher or legacy ticker processes. If the installer backed up a previous `statusLine` command, the original is restored; otherwise the wrapper is removed. The repo clone itself is left in place.
+Removes the project's hooks and config, deletes timer files, alert markers, and the debug log, and stops any legacy watcher or ticker processes from older versions. If the installer backed up a previous `statusLine` command, the original is restored; otherwise the wrapper is removed. The repo clone itself is left in place.
 
 - `--dry-run` prints exactly what would be changed without touching anything
 - `--yes` skips the confirmation prompt for non-interactive use
@@ -69,7 +69,7 @@ COUNTDOWN_DEBUG_LOG_FILE="$HOME/.claude/state/cache-countdown-debug.log"
 - `STATUSLINE_DISPLAY_MODE=tokens` — show the cached prompt size instead, like `500K tokens at risk`
 - `ENABLE_ALERTS=false` — disable the 60-second alert
 - `ALERT_60S_SOUND` — any readable sound file on macOS; skipped if playback is unavailable
-- `COUNTDOWN_DEBUG=true` — enable verbose hook and alert watcher logging while debugging
+- `COUNTDOWN_DEBUG=true` — enable verbose hook logging while debugging
 - `COUNTDOWN_DEBUG_LOG_FILE` — override the debug log path if you want it somewhere else
 
 ## How it works
@@ -81,13 +81,11 @@ Claude Code session is working...
 Agent stops
     |
     v
-Stop hook --------> sets stopped=true, timestamp=now, starts alert watcher
+Stop hook --------> sets stopped=true, timestamp=now
     |
     v
-Status line ------> refreshes every second and shows `⏱ M:SS cache`
-    |
-    v
-Alert watcher ----> plays the configured sound once when 60 seconds remain
+Status line ------> refreshes every second, shows `⏱ M:SS cache`,
+                    and plays the configured sound once when 60 seconds remain
     |
     v
 Cache expires -----> status line shows `⚠️ Cache Expired`
@@ -158,7 +156,7 @@ As your context window grows, so does your financial risk if the cache expires. 
 
 **The 60-second alert does not play:** confirm `ENABLE_ALERTS=true`, `ALERT_60S_SOUND` points to a readable sound file, and `afplay` is available on macOS. This tool does not fall back to terminal bells because it intentionally avoids direct TTY writes.
 
-If you need deeper visibility, set `COUNTDOWN_DEBUG=true` in `~/.claude/countdown.conf`, reproduce the issue, and inspect `~/.claude/state/cache-countdown-debug.log`. The log captures whether the hooks fired and whether the alert watcher launched or skipped playback.
+If you need deeper visibility, set `COUNTDOWN_DEBUG=true` in `~/.claude/countdown.conf`, reproduce the issue, and inspect `~/.claude/state/cache-countdown-debug.log`. The log captures whether the hooks fired and what state they wrote.
 
 For deeper integration questions, see [docs/extending.md](docs/extending.md).
 

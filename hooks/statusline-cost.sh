@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Status line wrapper for Claude Code — appends countdown and at-risk segments.
+# Status line wrapper for Claude Code — appends countdown and at-risk segments,
+# and fires the 60-second alert sound directly (no separate watcher process).
 #
 # Reads the same JSON stdin that Claude Code sends to statusLine commands.
 # If an original status line command was saved during install, runs it first
@@ -30,13 +31,21 @@ if [ -f "$ORIGINAL_CMD_FILE" ]; then
     fi
 fi
 
-# --- Compute countdown and cache risk display ---
+# --- Compute countdown and cache risk display, fire alert if due ---
 COUNTDOWN_SEGMENTS=$(
-    INPUT_JSON="$INPUT" CACHE_TTL_SECONDS="$CACHE_TTL_SECONDS" STATUSLINE_DISPLAY_MODE="$STATUSLINE_DISPLAY_MODE" python3 <<'PY' 2>/dev/null || true
+    INPUT_JSON="$INPUT" \
+    CACHE_TTL_SECONDS="$CACHE_TTL_SECONDS" \
+    STATUSLINE_DISPLAY_MODE="$STATUSLINE_DISPLAY_MODE" \
+    ENABLE_ALERTS="$ENABLE_ALERTS" \
+    ALERT_60S_SOUND="$ALERT_60S_SOUND" \
+    STATE_DIR="$STATE_DIR" \
+    python3 <<'PY' 2>/dev/null || true
 from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
+import shutil
+import subprocess
 import time
 
 try:
@@ -69,20 +78,25 @@ def iso_to_epoch_ns(value):
         return 0
 
 session_id = payload.get("session_id") or ""
+state_dir = Path(os.environ.get("STATE_DIR") or (Path.home() / ".claude" / "state"))
+remaining_seconds = None
+timer_stopped = False
+
 if session_id and ttl_seconds > 0:
-    timer_file = Path.home() / ".claude" / "state" / f"cache-timer-{session_id}.json"
+    timer_file = state_dir / f"cache-timer-{session_id}.json"
     try:
         timer = json.loads(timer_file.read_text(encoding="utf-8"))
     except Exception:
         timer = {}
 
     if timer.get("stopped") is True:
+        timer_stopped = True
         stopped_ns = as_int(timer.get("timestamp_epoch_ns")) or iso_to_epoch_ns(timer.get("timestamp", ""))
         if stopped_ns > 0:
             remaining_ns = (ttl_seconds * 1_000_000_000) - (time.time_ns() - stopped_ns)
             if remaining_ns > 0:
-                remaining = (remaining_ns + 999_999_999) // 1_000_000_000
-                mins, secs = divmod(remaining, 60)
+                remaining_seconds = (remaining_ns + 999_999_999) // 1_000_000_000
+                mins, secs = divmod(remaining_seconds, 60)
                 segments.append(f"⏱ {mins}:{secs:02d} cache")
             else:
                 expired = True
@@ -144,6 +158,61 @@ if total > 0:
         elif cost_cents > 250:
             risk_str = colorize(risk_str, "33")
         segments.append(risk_str)
+
+# ---------------------------------------------------------------------------
+# Alert firing — replaces the old cache-alert-watch.sh background watcher.
+# Fires at most once per Stop cycle. The marker file is cleared by the
+# UserPromptSubmit hook (cache-timer-resume.sh) and the SessionStart /clear
+# hook (cache-timer-clear.sh) so a fresh cycle can fire again.
+# ---------------------------------------------------------------------------
+def _maybe_fire_alert():
+    if os.environ.get("ENABLE_ALERTS", "true") != "true":
+        return
+    if not session_id or not timer_stopped:
+        return
+    if remaining_seconds is None or remaining_seconds > 60 or remaining_seconds <= 0:
+        return
+    # Don't fire if there's nothing actually at risk — covers post-/clear
+    # ticks where the timer file lingers but context_window has been reset.
+    if total <= 0:
+        return
+
+    sound = os.environ.get("ALERT_60S_SOUND") or ""
+    if not sound or not shutil.which("afplay") or not os.path.isfile(sound):
+        return
+
+    marker = state_dir / f"cache-alert-fired-{session_id}.flag"
+    try:
+        # O_EXCL gives us atomic "create only if absent" — two concurrent
+        # status-line refreshes can't both fire the sound.
+        fd = os.open(str(marker), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+    except FileExistsError:
+        return
+    except OSError:
+        return
+    try:
+        os.write(fd, b"")
+    finally:
+        os.close(fd)
+
+    try:
+        subprocess.Popen(
+            ["afplay", sound],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+            close_fds=True,
+        )
+    except Exception:
+        # If we couldn't actually launch afplay, drop the marker so a future
+        # tick can retry rather than silently swallowing the alert.
+        try:
+            marker.unlink()
+        except OSError:
+            pass
+
+_maybe_fire_alert()
 
 print(" | ".join(segments), end="")
 PY
