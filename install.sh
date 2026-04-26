@@ -15,13 +15,13 @@ CONFIG_FILE="$HOME/.claude/countdown.conf"
 
 echo "Claude Cache Countdown Installer"
 echo "================================"
-echo ""
+echo
 
 case "$(uname -s)" in
     Darwin) ;;
     Linux)
         echo "Note: Linux support is implemented but lightly tested."
-        echo ""
+        echo
         ;;
     *)
         echo "Error: this fork supports macOS and Linux only."
@@ -56,9 +56,9 @@ mkdir -p "$STATE_DIR"
 echo "Stop hook:      $STOP_HOOK"
 echo "Resume hook:    $RESUME_HOOK"
 echo "Status line:    $STATUSLINE_HOOK"
-echo "Alert watcher:  $ALERT_HOOK"
+echo "Alert watcher:  $ALERT_HOOK   (launched on demand by Stop hook; not wired into settings.json)"
 echo "Config:         $CONFIG_FILE"
-echo ""
+echo
 
 # Check if settings.json exists
 if [ ! -f "$SETTINGS_FILE" ]; then
@@ -70,7 +70,7 @@ fi
 mkdir -p "$(dirname "$CONFIG_FILE")"
 if [ ! -f "$CONFIG_FILE" ]; then
     echo "Creating $CONFIG_FILE..."
-    echo ""
+    echo
     echo "Select your cache TTL profile:"
     echo "  1) Pro / Standard (5 minutes)"
     echo "  2) Max (1 hour)"
@@ -182,50 +182,71 @@ except json.JSONDecodeError as exc:
 
 hooks = settings.setdefault("hooks", {})
 changed = False
+warnings = []
 
-# Add Stop hook
-stop_hooks = hooks.setdefault("Stop", [])
-already = any(
-    "cache-timer-write" in hook.get("command", "")
-    for entry in stop_hooks
-    for hook in entry.get("hooks", [])
-)
-if not already:
-    stop_hooks.append(
+
+def _matching_commands(entries, marker):
+    return [
+        hook.get("command", "")
+        for entry in entries
+        for hook in entry.get("hooks", [])
+        if marker in hook.get("command", "")
+    ]
+
+
+def _wire_hook(entries, marker, expected_cmd, label, timeout):
+    """Add the hook iff no matching command exists. If a command containing
+    `marker` already exists at a different path, warn and do not duplicate —
+    the user likely has another checkout wired up."""
+    global changed
+    matches = _matching_commands(entries, marker)
+    if any(cmd == expected_cmd for cmd in matches):
+        print(f"  {label} already installed.")
+        return
+    if matches:
+        warnings.append((label, expected_cmd, matches))
+        print(f"  WARNING: {label} already wired at a different path:")
+        for cmd in matches:
+            print(f"    found:    {cmd}")
+        print(f"    expected: {expected_cmd}")
+        print(
+            f"    Skipping to avoid duplicate hooks. Run that checkout's "
+            f"uninstall.sh (or edit settings.json) first."
+        )
+        return
+    entries.append(
         {
             "matcher": "",
-            "hooks": [{"type": "command", "command": stop_cmd, "timeout": 5}],
+            "hooks": [{"type": "command", "command": expected_cmd, "timeout": timeout}],
         }
     )
-    print("  Added Stop hook.")
+    print(f"  Added {label}.")
     changed = True
-else:
-    print("  Stop hook already installed.")
 
-# Add UserPromptSubmit hook
-submit_hooks = hooks.setdefault("UserPromptSubmit", [])
-already = any(
-    "cache-timer-resume" in hook.get("command", "")
-    for entry in submit_hooks
-    for hook in entry.get("hooks", [])
+
+_wire_hook(hooks.setdefault("Stop", []), "cache-timer-write", stop_cmd, "Stop hook", 5)
+_wire_hook(
+    hooks.setdefault("UserPromptSubmit", []),
+    "cache-timer-resume",
+    resume_cmd,
+    "UserPromptSubmit hook",
+    5,
 )
-if not already:
-    submit_hooks.append(
-        {
-            "matcher": "",
-            "hooks": [{"type": "command", "command": resume_cmd, "timeout": 5}],
-        }
-    )
-    print("  Added UserPromptSubmit hook.")
-    changed = True
-else:
-    print("  UserPromptSubmit hook already installed.")
 
 # Add status line wrapper
 sl = settings.get("statusLine", {})
 current_sl_cmd = sl.get("command", "") if isinstance(sl, dict) else ""
 
-if "statusline-cost" in current_sl_cmd:
+if "statusline-cost" in current_sl_cmd and current_sl_cmd != statusline_cmd:
+    warnings.append(("Status line wrapper", statusline_cmd, [current_sl_cmd]))
+    print("  WARNING: Status line wrapper already wired at a different path:")
+    print(f"    found:    {current_sl_cmd}")
+    print(f"    expected: {statusline_cmd}")
+    print(
+        "    Leaving existing statusLine in place. Run that checkout's "
+        "uninstall.sh (or edit settings.json) first."
+    )
+elif "statusline-cost" in current_sl_cmd:
     if not isinstance(sl, dict):
         sl = {}
     refresh = sl.get("refreshInterval")
@@ -269,9 +290,21 @@ if changed:
 print()
 PY
 
-echo ""
+echo
 echo "Installation complete!"
-echo ""
+echo
 echo "The countdown appears in Claude Code's status line when a session stops."
 echo "A small alert watcher plays the 60-second sound when alerts are enabled."
+echo
+echo "Tune behavior (TTL, alerts, sound, debug) in:"
+echo "  $CONFIG_FILE"
+if [ -f "$STATE_DIR/cache-countdown-original-statusline.txt" ]; then
+    echo
+    echo "Your previous statusLine command was backed up to:"
+    echo "  $STATE_DIR/cache-countdown-original-statusline.txt"
+fi
+echo
+echo "For non-standard ~/.claude layouts or hand-wiring, see:"
+echo "  $SCRIPT_DIR/docs/manual-install.md"
+echo
 echo "Restart Claude Code to load the new hooks."
