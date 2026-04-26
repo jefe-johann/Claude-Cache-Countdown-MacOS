@@ -32,7 +32,7 @@ The Stop hook writes one JSON file per session to `~/.claude/state/cache-timer-{
 | `stopped` | `true` = cache draining (show countdown), `false` = agent working (release the title) |
 | `cwd` | Session's working directory |
 
-The ticker calculates `remaining = CACHE_TTL_SECONDS - (now - timestamp)`. When `stopped` is `false`, the ticker stops writing custom titles so the terminal can reclaim them.
+The ticker calculates `remaining = CACHE_TTL_SECONDS - (now - timestamp)`. It polls a few times per second so slight scheduler drift does not skip visible countdown seconds, and only rewrites the tab title when the displayed text changes. When `stopped` is `false`, the ticker stops writing custom titles so the terminal can reclaim them.
 
 Stale files from sessions that ended abruptly accumulate here and can be deleted manually.
 

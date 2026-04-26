@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Background countdown ticker for Warp terminal.
-# Polls the timer file every second and updates the tab title only while
-# the cache is actively draining.
+# Polls the timer file several times per second and updates the tab title
+# only while the cache is actively draining.
 #
 # Runs for the lifetime of the session. Launched once by the first Stop hook;
 # stays alive across prompt cycles rather than being killed/relaunched each time.
@@ -46,6 +46,7 @@ _beeped_60=false
 _last_phase=""
 _last_bucket=""
 _sent_warp_stop=false
+_last_title=""
 
 _alert_60s() {
     if [ "$ENABLE_ALERTS" != "true" ]; then
@@ -119,6 +120,7 @@ while true; do
         if [ "$_last_phase" != "active" ]; then
             _last_phase="active"
             _last_bucket=""
+            _last_title=""
             countdown_debug_log bg "active session=$SESSION_ID tty=$TTY_DEV"
         fi
     else
@@ -148,17 +150,26 @@ while true; do
                 mins=$(( remaining / 60 ))
                 secs=$(( remaining % 60 ))
                 if [ -n "$project" ]; then
-                    _write_title "$(printf '⏱ %d:%02d | %s' "$mins" "$secs" "$project")"
+                    _title=$(printf '⏱ %d:%02d | %s' "$mins" "$secs" "$project")
                 else
-                    _write_title "$(printf '⏱ %d:%02d' "$mins" "$secs")"
+                    _title=$(printf '⏱ %d:%02d' "$mins" "$secs")
+                fi
+
+                # Poll faster than once per second so slight scheduler drift
+                # cannot skip an entire visible second, but only rewrite the
+                # title when the displayed countdown text actually changes.
+                if [ "$_title" != "$_last_title" ]; then
+                    _write_title "$_title"
+                    _last_title="$_title"
                 fi
             elif [ "$_last_phase" != "expired" ]; then
                 _last_phase="expired"
                 _last_bucket=""
+                _last_title=""
                 countdown_debug_log bg "expired session=$SESSION_ID tty=$TTY_DEV"
             fi
         fi
     fi
 
-    sleep 1
+    sleep 0.2 2>/dev/null || sleep 1
 done

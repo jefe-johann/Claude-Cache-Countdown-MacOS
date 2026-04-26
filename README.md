@@ -74,7 +74,7 @@ Agent stops
 Stop hook --------> sets stopped=true, timestamp=now, starts background ticker
     |
     v
-Background ticker -> reads timer file every second and writes `⏱ M:SS | project` to the real TTY
+Background ticker -> polls the timer file a few times per second and writes `⏱ M:SS | project` to the real TTY when the visible second changes
     |
     v
 User sends new message
