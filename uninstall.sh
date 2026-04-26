@@ -37,6 +37,13 @@ for arg in "$@"; do
     esac
 done
 
+if ! command -v python3 &>/dev/null; then
+    echo "Error: python3 is required to safely rewrite $SETTINGS_FILE." >&2
+    echo "Install python3 and re-run, or remove the cache-timer-write.sh / cache-timer-resume.sh" >&2
+    echo "hook entries (and the statusline-cost.sh statusLine) from $SETTINGS_FILE by hand." >&2
+    exit 1
+fi
+
 PREFIX=""
 if [ "$DRY_RUN" -eq 1 ]; then
     PREFIX="[dry-run] "
@@ -113,6 +120,9 @@ results = {
 def emit():
     for k, v in results.items():
         print(f"{k}={v}")
+    # Sentinel: confirms the script ran to completion. The bash side treats
+    # missing `done=1` as a partial/aborted run rather than success.
+    print("done=1")
 
 
 try:
@@ -245,6 +255,7 @@ SETTINGS_STATUS="not-found"
 STOP_REMOVED=0
 SUBMIT_REMOVED=0
 STATUSLINE_RESULT="unchanged"
+PYTHON_DONE=0
 if [ -n "$SETTINGS_RESULT" ] && [ "$SETTINGS_RESULT" != "not-found" ]; then
     while IFS='=' read -r k v; do
         case "$k" in
@@ -252,8 +263,17 @@ if [ -n "$SETTINGS_RESULT" ] && [ "$SETTINGS_RESULT" != "not-found" ]; then
             stop_removed) STOP_REMOVED="$v" ;;
             submit_removed) SUBMIT_REMOVED="$v" ;;
             statusline) STATUSLINE_RESULT="$v" ;;
+            done) PYTHON_DONE="$v" ;;
         esac
     done <<< "$SETTINGS_RESULT"
+
+    if [ "$PYTHON_DONE" != "1" ]; then
+        echo "  Warning: settings cleanup did not complete (python helper aborted before finishing)."
+        echo "  Inspect $SETTINGS_FILE and remove any remaining cache-timer-write.sh / cache-timer-resume.sh"
+        echo "  hooks and the statusline-cost.sh statusLine entry by hand."
+        SETTINGS_STATUS="incomplete"
+        EXIT_CODE=1
+    fi
 fi
 
 if [ "$SETTINGS_STATUS" = "invalid-json" ]; then
@@ -273,11 +293,13 @@ fi
 PROCS_STOPPED=0
 PIDS_REMOVED=0
 
+PIDS_KEPT=0
+
 if [ -d "$STATE_DIR" ]; then
     shopt -s nullglob
     for pidfile in "$STATE_DIR"/cache-alert-*.pid "$STATE_DIR"/cache-timer-*.pid; do
         [ -e "$pidfile" ] || continue
-        pid=$(cat "$pidfile" 2>/dev/null | tr -d '[:space:]')
+        pid=$(tr -d '[:space:]' < "$pidfile" 2>/dev/null)
         expected_cmd=""
         label="process"
         case "$(basename "$pidfile")" in
@@ -291,19 +313,40 @@ if [ -d "$STATE_DIR" ]; then
                 ;;
         esac
 
+        # Three cases:
+        #   1. pid is alive AND command matches expected → kill + remove pidfile.
+        #   2. pid is alive but command does NOT match → unrelated process now
+        #      owns this pid. Leave both the process and the pidfile alone so
+        #      the user can investigate.
+        #   3. pid is missing/dead → pidfile is stale, remove it.
+        process_alive=0
+        cmd_matches=0
+        cmd=""
         if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+            process_alive=1
             cmd=$(ps -o command= -p "$pid" 2>/dev/null || true)
-            if [ -n "$expected_cmd" ] && echo "$cmd" | grep -q "$expected_cmd"; then
-                if [ "$DRY_RUN" -eq 1 ]; then
-                    echo "${PREFIX}Would stop $label pid=$pid"
-                else
-                    kill "$pid" 2>/dev/null || true
-                fi
-                PROCS_STOPPED=$((PROCS_STOPPED + 1))
-            else
-                echo "  Skipping pid=$pid in $pidfile (command does not look like $expected_cmd)"
+            if [ -n "$expected_cmd" ] && echo "$cmd" | grep -Fq "$expected_cmd"; then
+                cmd_matches=1
             fi
         fi
+
+        if [ "$process_alive" -eq 1 ] && [ "$cmd_matches" -eq 0 ]; then
+            echo "  Skipping pid=$pid in $pidfile — running command does not match $expected_cmd:"
+            echo "    $cmd"
+            echo "  Leaving $pidfile in place; remove it manually if the process is unrelated."
+            PIDS_KEPT=$((PIDS_KEPT + 1))
+            continue
+        fi
+
+        if [ "$process_alive" -eq 1 ]; then
+            if [ "$DRY_RUN" -eq 1 ]; then
+                echo "${PREFIX}Would stop $label pid=$pid"
+            else
+                kill "$pid" 2>/dev/null || true
+            fi
+            PROCS_STOPPED=$((PROCS_STOPPED + 1))
+        fi
+
         if [ "$DRY_RUN" -eq 1 ]; then
             echo "${PREFIX}Would remove $pidfile"
         else
@@ -394,6 +437,9 @@ case "$SETTINGS_STATUS" in
     invalid-json)
         echo "  Settings file: not modified (invalid JSON)"
         ;;
+    incomplete)
+        echo "  Settings file: cleanup did not finish — see warning above"
+        ;;
     *)
         echo "  Settings file: $SETTINGS_STATUS"
         ;;
@@ -404,6 +450,9 @@ echo "  Status line backup: $ORIGINAL_REMOVED"
 echo "  Debug log: $DEBUG_LOG_REMOVED"
 echo "  Timer files removed: $TIMER_FILES_REMOVED"
 echo "  PID files removed: $PIDS_REMOVED"
+if [ "$PIDS_KEPT" -gt 0 ]; then
+    echo "  PID files left in place (pid alive, command unrecognized): $PIDS_KEPT"
+fi
 echo "  Background processes stopped: $PROCS_STOPPED"
 
 echo ""
