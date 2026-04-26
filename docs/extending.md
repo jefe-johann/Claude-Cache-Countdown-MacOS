@@ -14,7 +14,8 @@ The Stop hook writes one JSON file per session to `~/.claude/state/cache-timer-{
 
 ```json
 {
-  "timestamp": "2026-03-14T10:35:00.000Z",
+  "timestamp": "2026-03-14T10:35:00.123456789Z",
+  "timestamp_epoch_ns": 1773484500123456789,
   "session_id": "e861c4a2-5b5a-4eb3-99cd-e71c9e6b6983",
   "project": "myapp",
   "host_pid": 12345,
@@ -26,13 +27,14 @@ The Stop hook writes one JSON file per session to `~/.claude/state/cache-timer-{
 | Field | Meaning |
 |-------|---------|
 | `timestamp` | When the state last changed (UTC ISO 8601) |
+| `timestamp_epoch_ns` | Optional high-resolution Unix timestamp in nanoseconds. The ticker uses this when present for smoother second boundaries |
 | `session_id` | Claude Code session identifier; used as the filename suffix |
 | `project` | Display label for the tab title (typically the basename of `cwd`) |
 | `host_pid` | PID of the terminal-tab process; `0` if detection failed. Used for per-tab session tracking |
 | `stopped` | `true` = cache draining (show countdown), `false` = agent working (release the title) |
 | `cwd` | Session's working directory |
 
-The ticker calculates `remaining = CACHE_TTL_SECONDS - (now - timestamp)`. It polls a few times per second so slight scheduler drift does not skip visible countdown seconds, and only rewrites the tab title when the displayed text changes. When `stopped` is `false`, the ticker stops writing custom titles so the terminal can reclaim them.
+The ticker calculates remaining time from `timestamp_epoch_ns` when available, or falls back to `timestamp` for older/custom timer files. It polls tightly during active countdowns so slight scheduler drift is not visible, and only rewrites the tab title when the displayed text changes. When `stopped` is `false`, the ticker stops writing custom titles so the terminal can reclaim them.
 
 Stale files from sessions that ended abruptly accumulate here and can be deleted manually.
 
@@ -45,6 +47,7 @@ If you want to wire the countdown into something other than Claude Code's hooks,
 
 Optional but useful fields:
 
+- `timestamp_epoch_ns` — improves countdown smoothness by preserving sub-second timing. If you omit it, the ticker falls back to `timestamp`.
 - `host_pid` — enables per-tab session tracking and lets the ticker kill stale tickers on the same TTY. Set to `0` if you can't detect it.
 - `cwd` — the session's working directory. Helps preserve project context and detect session resets.
 

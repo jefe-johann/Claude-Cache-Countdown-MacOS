@@ -35,7 +35,8 @@ STATE_DIR="$HOME/.claude/state"
 mkdir -p "$STATE_DIR"
 
 TIMER_FILE="$STATE_DIR/cache-timer-${SESSION_ID}.json"
-TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")
+TIMESTAMP_EPOCH_NS=$(countdown_now_epoch_ns)
+TIMESTAMP=$(countdown_iso_from_epoch_ns "$TIMESTAMP_EPOCH_NS")
 
 # Read existing fields if file exists, preserve them
 HOST_PID=0
@@ -55,8 +56,8 @@ fi
 FINAL_CWD="${CWD_JSON:-$EXISTING_CWD}"
 
 # Write timer file with stopped=false FIRST (before any PID discovery)
-printf '{"timestamp":"%s","session_id":"%s","project":"%s","host_pid":%d,"stopped":false,"cwd":"%s"}' \
-    "$TIMESTAMP" "$SESSION_ID" "$PROJECT" "$HOST_PID" "$FINAL_CWD" > "$TIMER_FILE"
+printf '{"timestamp":"%s","timestamp_epoch_ns":%s,"session_id":"%s","project":"%s","host_pid":%d,"stopped":false,"cwd":"%s"}' \
+    "$TIMESTAMP" "$TIMESTAMP_EPOCH_NS" "$SESSION_ID" "$PROJECT" "$HOST_PID" "$FINAL_CWD" > "$TIMER_FILE"
 countdown_debug_log resume "marked active session=$SESSION_ID project=$PROJECT host_pid=$HOST_PID"
 
 # Best-effort: discover host PID if not already known
@@ -89,8 +90,8 @@ if [ "$HOST_PID" -eq 0 ]; then
 
     # Re-write with PID if we found it
     if [ "$HOST_PID" -ne 0 ]; then
-        printf '{"timestamp":"%s","session_id":"%s","project":"%s","host_pid":%d,"stopped":false,"cwd":"%s"}' \
-            "$TIMESTAMP" "$SESSION_ID" "$PROJECT" "$HOST_PID" "$FINAL_CWD" > "$TIMER_FILE"
+        printf '{"timestamp":"%s","timestamp_epoch_ns":%s,"session_id":"%s","project":"%s","host_pid":%d,"stopped":false,"cwd":"%s"}' \
+            "$TIMESTAMP" "$TIMESTAMP_EPOCH_NS" "$SESSION_ID" "$PROJECT" "$HOST_PID" "$FINAL_CWD" > "$TIMER_FILE"
         countdown_debug_log resume "updated host pid session=$SESSION_ID host_pid=$HOST_PID"
     fi
 fi

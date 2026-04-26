@@ -35,7 +35,8 @@ STATE_DIR="$HOME/.claude/state"
 mkdir -p "$STATE_DIR"
 
 TIMER_FILE="$STATE_DIR/cache-timer-${SESSION_ID}.json"
-TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")
+TIMESTAMP_EPOCH_NS=$(countdown_now_epoch_ns)
+TIMESTAMP=$(countdown_iso_from_epoch_ns "$TIMESTAMP_EPOCH_NS")
 
 # Find host PID: walk up process tree looking for a terminal emulator.
 # The host PID is the process directly under the terminal emulator,
@@ -73,8 +74,8 @@ elif [ -d "/proc/$$" ]; then
 fi
 
 # Write timer file
-printf '{"timestamp":"%s","session_id":"%s","project":"%s","host_pid":%d,"stopped":true,"cwd":"%s"}' \
-    "$TIMESTAMP" "$SESSION_ID" "$PROJECT" "$HOST_PID" "${CWD_JSON:-}" > "$TIMER_FILE"
+printf '{"timestamp":"%s","timestamp_epoch_ns":%s,"session_id":"%s","project":"%s","host_pid":%d,"stopped":true,"cwd":"%s"}' \
+    "$TIMESTAMP" "$TIMESTAMP_EPOCH_NS" "$SESSION_ID" "$PROJECT" "$HOST_PID" "${CWD_JSON:-}" > "$TIMER_FILE"
 countdown_debug_log stop "wrote timer session=$SESSION_ID project=$PROJECT host_pid=$HOST_PID file=$TIMER_FILE"
 
 # Check if ticker is already running for this session
@@ -83,8 +84,16 @@ _ticker_running=false
 if [ -f "$PID_FILE" ]; then
     _old_pid=$(cat "$PID_FILE" 2>/dev/null)
     if [ -n "$_old_pid" ] && kill -0 "$_old_pid" 2>/dev/null; then
-        _ticker_running=true
-        countdown_debug_log stop "ticker already running session=$SESSION_ID pid=$_old_pid"
+        _pid_mtime=$(countdown_file_mtime_epoch "$PID_FILE" 2>/dev/null || echo "0")
+        _script_mtime=$(countdown_file_mtime_epoch "$SCRIPT_DIR/cache-timer-bg.sh" 2>/dev/null || echo "0")
+        if [ "$_script_mtime" -gt "$_pid_mtime" ]; then
+            kill "$_old_pid" 2>/dev/null || true
+            rm -f "$PID_FILE"
+            countdown_debug_log stop "restarting ticker after script update session=$SESSION_ID pid=$_old_pid"
+        else
+            _ticker_running=true
+            countdown_debug_log stop "ticker already running session=$SESSION_ID pid=$_old_pid"
+        fi
     else
         rm -f "$PID_FILE"
         countdown_debug_log stop "removed stale pid file session=$SESSION_ID pid=${_old_pid:-unknown}"

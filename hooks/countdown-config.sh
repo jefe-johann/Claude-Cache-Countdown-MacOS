@@ -87,6 +87,52 @@ countdown_debug_log() {
     printf '%s [%s] %s\n' "$ts" "$tag" "$message" >> "$COUNTDOWN_DEBUG_LOG_FILE" 2>/dev/null || true
 }
 
+countdown_now_epoch_ns() {
+    local ns
+    ns=$(date -u +%s%N 2>/dev/null || true)
+    case "$ns" in
+        ''|*[!0-9]*)
+            printf '%s000000000\n' "$(date -u +%s)"
+            ;;
+        *)
+            printf '%s\n' "$ns"
+            ;;
+    esac
+}
+
+countdown_iso_from_epoch_ns() {
+    local epoch_ns="${1:-0}"
+    local seconds
+    local nanos
+    local base
+
+    case "$epoch_ns" in
+        ''|*[!0-9]*) epoch_ns=0 ;;
+    esac
+
+    seconds=$(( epoch_ns / 1000000000 ))
+    nanos=$(( epoch_ns % 1000000000 ))
+
+    case "$(uname -s)" in
+        Darwin) base=$(date -u -r "$seconds" +"%Y-%m-%dT%H:%M:%S" 2>/dev/null || echo "1970-01-01T00:00:00") ;;
+        Linux) base=$(date -u -d "@$seconds" +"%Y-%m-%dT%H:%M:%S" 2>/dev/null || echo "1970-01-01T00:00:00") ;;
+        *) base=$(date -u +"%Y-%m-%dT%H:%M:%S" 2>/dev/null || echo "1970-01-01T00:00:00") ;;
+    esac
+
+    printf '%s.%09dZ\n' "$base" "$nanos"
+}
+
+countdown_file_mtime_epoch() {
+    local path="${1:-}"
+    [ -n "$path" ] && [ -e "$path" ] || return 1
+
+    case "$(uname -s)" in
+        Darwin) stat -f %m "$path" ;;
+        Linux) stat -c %Y "$path" ;;
+        *) return 1 ;;
+    esac
+}
+
 countdown_json_escape() {
     printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
 }

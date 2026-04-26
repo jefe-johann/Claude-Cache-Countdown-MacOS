@@ -27,6 +27,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 countdown_load_config
 
 [ -f "$TIMER_FILE" ] || exit 0
+SCRIPT_MTIME=$(countdown_file_mtime_epoch "$SCRIPT_DIR/cache-timer-bg.sh" 2>/dev/null || echo "0")
 
 # Detect /clear: watch the project's conversation directory for new sessions.
 # If a different session's JSONL is modified after we launched, exit.
@@ -70,15 +71,6 @@ _write_title() {
     fi
 }
 
-_mtime_epoch() {
-    local path="$1"
-    case "$OS_NAME" in
-        Darwin) stat -f %m "$path" ;;
-        Linux) stat -c %Y "$path" ;;
-        *) return 1 ;;
-    esac
-}
-
 _timestamp_epoch() {
     local ts="$1"
     local ts_clean
@@ -91,8 +83,37 @@ _timestamp_epoch() {
     esac
 }
 
+_timestamp_epoch_ns() {
+    local ts="$1"
+    local ts_clean
+    local frac="0"
+    local seconds
+
+    ts_clean=$(echo "$ts" | sed 's/Z$//')
+    if [[ "$ts_clean" == *.* ]]; then
+        frac="${ts_clean##*.}"
+        ts_clean="${ts_clean%%.*}"
+    fi
+
+    seconds=$(_timestamp_epoch "$ts_clean")
+    case "$frac" in
+        ''|*[!0-9]*) frac="0" ;;
+    esac
+    frac="${frac}000000000"
+    frac="${frac:0:9}"
+
+    printf '%s\n' $(( (seconds * 1000000000) + 10#$frac ))
+}
+
 while true; do
+    _sleep_interval=0.2
     countdown_load_config
+
+    _current_script_mtime=$(countdown_file_mtime_epoch "$SCRIPT_DIR/cache-timer-bg.sh" 2>/dev/null || echo "$SCRIPT_MTIME")
+    if [ "$SCRIPT_MTIME" -gt 0 ] && [ "$_current_script_mtime" -gt "$SCRIPT_MTIME" ]; then
+        countdown_debug_log bg "reexec on script update session=$SESSION_ID tty=$TTY_DEV"
+        exec bash "$SCRIPT_DIR/cache-timer-bg.sh" "$SESSION_ID" "$TTY_DEV"
+    fi
 
     # Exit if timer file was deleted (session ended or cleaned up)
     [ -f "$TIMER_FILE" ] || exit 0
@@ -102,7 +123,7 @@ while true; do
         for _jf in "$CONV_DIR"/*.jsonl; do
             [ -f "$_jf" ] || continue
             [ "$(basename "$_jf" .jsonl)" = "$SESSION_ID" ] && continue
-            _mtime=$(_mtime_epoch "$_jf" 2>/dev/null) || continue
+            _mtime=$(countdown_file_mtime_epoch "$_jf" 2>/dev/null) || continue
             if [ "$_mtime" -gt "$START_EPOCH" ]; then
                 countdown_debug_log bg "exit on clear session=$SESSION_ID tty=$TTY_DEV"
                 exit 0
@@ -126,11 +147,16 @@ while true; do
     else
         # Claude stopped — show countdown while cache is still active
         ts=$(grep -o '"timestamp":"[^"]*"' "$TIMER_FILE" 2>/dev/null | cut -d'"' -f4 || echo "")
+        ts_epoch_ns=$(grep -o '"timestamp_epoch_ns":[0-9]*' "$TIMER_FILE" 2>/dev/null | head -1 | grep -o '[0-9]*' || echo "")
         if [ -n "$ts" ]; then
-            ts_epoch=$(_timestamp_epoch "$ts")
-            now=$(date -u +%s)
-            remaining=$(( CACHE_TTL_SECONDS - (now - ts_epoch) ))
-            if [ "$remaining" -gt 0 ]; then
+            if [ -z "$ts_epoch_ns" ]; then
+                ts_epoch_ns=$(_timestamp_epoch_ns "$ts")
+            fi
+            now_ns=$(countdown_now_epoch_ns)
+            remaining_ns=$(( (CACHE_TTL_SECONDS * 1000000000) - (now_ns - ts_epoch_ns) ))
+            if [ "$remaining_ns" -gt 0 ]; then
+                _sleep_interval=0.05
+                remaining=$(( (remaining_ns + 999999999) / 1000000000 ))
                 _bucket=$(( remaining / 15 ))
                 if [ "$_last_phase" != "countdown" ] || [ "$_last_bucket" != "$_bucket" ]; then
                     _last_phase="countdown"
@@ -155,9 +181,8 @@ while true; do
                     _title=$(printf '⏱ %d:%02d' "$mins" "$secs")
                 fi
 
-                # Poll faster than once per second so slight scheduler drift
-                # cannot skip an entire visible second, but only rewrite the
-                # title when the displayed countdown text actually changes.
+                # Poll tightly enough that scheduler drift is not visible, but
+                # only rewrite the title when the displayed text changes.
                 if [ "$_title" != "$_last_title" ]; then
                     _write_title "$_title"
                     _last_title="$_title"
@@ -171,5 +196,5 @@ while true; do
         fi
     fi
 
-    sleep 0.2 2>/dev/null || sleep 1
+    sleep "$_sleep_interval" 2>/dev/null || sleep 1
 done
