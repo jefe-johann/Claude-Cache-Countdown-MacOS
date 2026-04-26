@@ -38,6 +38,18 @@ The installer adds the hooks and status line wrapper to your Claude Code setting
 
 If you'd rather wire things up by hand, see [docs/manual-install.md](docs/manual-install.md).
 
+## Uninstall
+
+```bash
+bash uninstall.sh
+```
+
+Removes the project's hooks and config, deletes timer files and the debug log, and stops any running ticker processes. If the installer backed up a previous `statusLine` command, the original is restored; otherwise the wrapper is removed. The repo clone itself is left in place.
+
+- `--dry-run` prints exactly what would be changed without touching anything
+- `--yes` skips the confirmation prompt for non-interactive use
+- Restart Claude Code afterward so any already-loaded hooks unload
+
 ## Configure
 
 The installer writes `~/.claude/countdown.conf` with sensible defaults — most people won't need to touch it. Edit the file if you want to switch TTL profiles, change the status line display, or customize alerts:
