@@ -190,7 +190,13 @@ while true; do
             elif [ "$_last_phase" != "expired" ]; then
                 _last_phase="expired"
                 _last_bucket=""
-                _last_title=""
+                if [ -n "$project" ]; then
+                    _title=$(printf '⚠️ | %s' "$project")
+                else
+                    _title='⚠️'
+                fi
+                _write_title "$_title"
+                _last_title="$_title"
                 countdown_debug_log bg "expired session=$SESSION_ID tty=$TTY_DEV"
             fi
         fi

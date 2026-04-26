@@ -16,7 +16,7 @@ This tool puts the countdown right on your terminal tab so you never get surpris
 
 ## What it does
 
-- **Live tab-title countdown** — a background process takes over your terminal tab title only while the cache is actually draining. No extra windows to manage.
+- **Live tab-title countdown** — a background process takes over your terminal tab title while the cache is draining, then flips to a clear expired warning when the window closes.
 - **Cost-at-risk in your status line** — shows the live dollar value (or token count) of what you'd pay if your cache expired right now, embedded in Claude Code's native bottom status line.
 - **Configurable alerts** — optional sound when 60 seconds remain.
 - **Multi-session aware** — tracks separate countdowns across multiple Claude Code tabs.
@@ -75,6 +75,9 @@ Stop hook --------> sets stopped=true, timestamp=now, starts background ticker
     |
     v
 Background ticker -> polls the timer file a few times per second and writes `⏱ M:SS | project` to the real TTY when the visible second changes
+    |
+    v
+Cache expires -----> writes `⚠️ | project`
     |
     v
 User sends new message
