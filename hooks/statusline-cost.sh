@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Status line wrapper for Claude Code — appends the configured at-risk segment.
+# Status line wrapper for Claude Code — appends countdown and at-risk segments.
 #
 # Reads the same JSON stdin that Claude Code sends to statusLine commands.
 # If an original status line command was saved during install, runs it first
-# and appends the at-risk segment. Otherwise outputs only the at-risk segment.
+# and appends countdown/cost segments. Otherwise outputs only those segments.
 #
 # Installed by install.sh. Original command backed up to:
 #   ~/.claude/state/cache-countdown-original-statusline.txt
@@ -30,18 +30,19 @@ if [ -f "$ORIGINAL_CMD_FILE" ]; then
     fi
 fi
 
-# --- Compute cache risk display ---
-RISK_STR=$(
+# --- Compute countdown and cache risk display ---
+COUNTDOWN_SEGMENTS=$(
     INPUT_JSON="$INPUT" CACHE_TTL_SECONDS="$CACHE_TTL_SECONDS" STATUSLINE_DISPLAY_MODE="$STATUSLINE_DISPLAY_MODE" python3 <<'PY' 2>/dev/null || true
+from datetime import datetime, timezone
 import json
 import os
+from pathlib import Path
+import time
 
 try:
     payload = json.loads(os.environ["INPUT_JSON"])
 except Exception:
     raise SystemExit(0)
-
-usage = ((payload.get("context_window") or {}).get("current_usage") or {})
 
 def as_int(value):
     try:
@@ -49,22 +50,50 @@ def as_int(value):
     except (TypeError, ValueError):
         return 0
 
+ttl_seconds = as_int(os.environ.get("CACHE_TTL_SECONDS"))
+segments = []
+expired = False
+
+def iso_to_epoch_ns(value):
+    try:
+        ts = str(value).strip()
+        if ts.endswith("Z"):
+            ts = ts[:-1]
+        frac = "0"
+        if "." in ts:
+            ts, frac = ts.split(".", 1)
+        frac = (frac + "000000000")[:9]
+        dt = datetime.strptime(ts, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
+        return int(dt.timestamp()) * 1_000_000_000 + int(frac)
+    except Exception:
+        return 0
+
+session_id = payload.get("session_id") or ""
+if session_id and ttl_seconds > 0:
+    timer_file = Path.home() / ".claude" / "state" / f"cache-timer-{session_id}.json"
+    try:
+        timer = json.loads(timer_file.read_text(encoding="utf-8"))
+    except Exception:
+        timer = {}
+
+    if timer.get("stopped") is True:
+        stopped_ns = as_int(timer.get("timestamp_epoch_ns")) or iso_to_epoch_ns(timer.get("timestamp", ""))
+        if stopped_ns > 0:
+            remaining_ns = (ttl_seconds * 1_000_000_000) - (time.time_ns() - stopped_ns)
+            if remaining_ns > 0:
+                remaining = (remaining_ns + 999_999_999) // 1_000_000_000
+                mins, secs = divmod(remaining, 60)
+                segments.append(f"⏱ {mins}:{secs:02d} cache")
+            else:
+                expired = True
+                segments.append("⚠️ Cache Expired")
+
+usage = ((payload.get("context_window") or {}).get("current_usage") or {})
+
 input_tokens = as_int(usage.get("input_tokens"))
 cache_create = as_int(usage.get("cache_creation_input_tokens"))
 cache_read = as_int(usage.get("cache_read_input_tokens"))
 total = input_tokens + cache_create + cache_read
-
-if total <= 0:
-    raise SystemExit(0)
-
-ttl_seconds = as_int(os.environ.get("CACHE_TTL_SECONDS"))
-if ttl_seconds == 3600:
-    rate_cents = 1900 if total > 200_000 else 950
-else:
-    rate_cents = 1150 if total > 200_000 else 575
-
-cost_cents = total * rate_cents // 1_000_000
-display_mode = os.environ.get("STATUSLINE_DISPLAY_MODE", "dollars")
 
 term = os.environ.get("TERM", "")
 colorterm = os.environ.get("COLORTERM", "")
@@ -89,29 +118,42 @@ def format_tokens(token_count):
         return f"{int(value)}{suffix}"
     return f"{value:.1f}".rstrip("0").rstrip(".") + suffix
 
-if display_mode == "tokens":
-    risk_str = f"{format_tokens(total)} tokens at risk"
-elif cost_cents > 0:
-    risk_str = f"${cost_cents // 100}.{cost_cents % 100:02d} at risk"
-else:
-    risk_str = ""
+if total > 0:
+    if ttl_seconds == 3600:
+        rate_cents = 1900 if total > 200_000 else 950
+    else:
+        rate_cents = 1150 if total > 200_000 else 575
 
-if risk_str:
-    if cost_cents > 1000:
-        risk_str = colorize(risk_str, "31")
-    elif cost_cents > 500:
-        risk_str = colorize(risk_str, "38;5;208" if supports_256 else "33")
-    elif cost_cents > 250:
-        risk_str = colorize(risk_str, "33")
-    print(risk_str, end="")
+    cost_cents = total * rate_cents // 1_000_000
+    display_mode = os.environ.get("STATUSLINE_DISPLAY_MODE", "dollars")
+
+    if display_mode == "tokens":
+        suffix = "tokens expired" if expired else "tokens at risk"
+        risk_str = f"{format_tokens(total)} {suffix}"
+    elif cost_cents > 0:
+        suffix = "recache cost" if expired else "at risk"
+        risk_str = f"${cost_cents // 100}.{cost_cents % 100:02d} {suffix}"
+    else:
+        risk_str = ""
+
+    if risk_str:
+        if cost_cents > 1000:
+            risk_str = colorize(risk_str, "31")
+        elif cost_cents > 500:
+            risk_str = colorize(risk_str, "38;5;208" if supports_256 else "33")
+        elif cost_cents > 250:
+            risk_str = colorize(risk_str, "33")
+        segments.append(risk_str)
+
+print(" | ".join(segments), end="")
 PY
 )
 
 # --- Combine output ---
-if [ -n "$ORIGINAL_OUTPUT" ] && [ -n "$RISK_STR" ]; then
-    printf '%s | %s' "$ORIGINAL_OUTPUT" "$RISK_STR"
+if [ -n "$ORIGINAL_OUTPUT" ] && [ -n "$COUNTDOWN_SEGMENTS" ]; then
+    printf '%s | %s' "$ORIGINAL_OUTPUT" "$COUNTDOWN_SEGMENTS"
 elif [ -n "$ORIGINAL_OUTPUT" ]; then
     printf '%s' "$ORIGINAL_OUTPUT"
-elif [ -n "$RISK_STR" ]; then
-    printf '%s' "$RISK_STR"
+elif [ -n "$COUNTDOWN_SEGMENTS" ]; then
+    printf '%s' "$COUNTDOWN_SEGMENTS"
 fi

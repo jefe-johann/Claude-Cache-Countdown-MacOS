@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # UserPromptSubmit hook for Claude Code
 # Marks the cache timer as active (stopped=false) when the user sends a new prompt.
-# This tells the ticker the session is active again so it can stop forcing
-# a custom title while Warp resumes control.
+# This tells the status line and alert watcher that the cache is no longer
+# draining while Claude is working.
 #
-# Creates the timer file if it doesn't exist yet (session started after ticker).
+# Creates the timer file if it doesn't exist yet.
 # Also cleans up stale timer files from other sessions sharing the same host_pid.
 #
 # Install: Add to ~/.claude/settings.json under hooks.UserPromptSubmit
@@ -12,6 +12,10 @@
 # No dependencies beyond bash and standard Unix tools.
 
 set -euo pipefail
+
+# $PPID is the Claude CLI process that invoked this hook. Recorded so a
+# later Stop hook + alert watcher can detect a Claude exit (/quit).
+CLAUDE_PID="${PPID:-0}"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
@@ -56,8 +60,8 @@ fi
 FINAL_CWD="${CWD_JSON:-$EXISTING_CWD}"
 
 # Write timer file with stopped=false FIRST (before any PID discovery)
-printf '{"timestamp":"%s","timestamp_epoch_ns":%s,"session_id":"%s","project":"%s","host_pid":%d,"stopped":false,"cwd":"%s"}' \
-    "$TIMESTAMP" "$TIMESTAMP_EPOCH_NS" "$SESSION_ID" "$PROJECT" "$HOST_PID" "$FINAL_CWD" > "$TIMER_FILE"
+printf '{"timestamp":"%s","timestamp_epoch_ns":%s,"session_id":"%s","project":"%s","host_pid":%d,"claude_pid":%d,"stopped":false,"cwd":"%s"}' \
+    "$TIMESTAMP" "$TIMESTAMP_EPOCH_NS" "$SESSION_ID" "$PROJECT" "$HOST_PID" "$CLAUDE_PID" "$FINAL_CWD" > "$TIMER_FILE"
 countdown_debug_log resume "marked active session=$SESSION_ID project=$PROJECT host_pid=$HOST_PID"
 
 # Best-effort: discover host PID if not already known
@@ -69,7 +73,7 @@ if [ "$HOST_PID" -eq 0 ]; then
             [ -z "$_ppid" ] && break
             _name=$(ps -o comm= -p "$_ppid" 2>/dev/null | tr -d ' ') || break
             case "$_name" in
-                *Terminal*|*iTerm*|*alacritty*|*wezterm*|*kitty*)
+                *Terminal*|*iTerm*|*alacritty*|*wezterm*|*kitty*|*Warp*)
                     HOST_PID=$_pid; break ;;
             esac
             _pid=$_ppid
@@ -81,7 +85,7 @@ if [ "$HOST_PID" -eq 0 ]; then
             [ -z "$_ppid" ] || [ "$_ppid" = "0" ] && break
             _name=$(cat "/proc/$_ppid/comm" 2>/dev/null) || break
             case "$_name" in
-                *terminal*|*tmux*|*screen*|*alacritty*|*wezterm*|*kitty*|*konsole*|*gnome-t*)
+                *terminal*|*tmux*|*screen*|*alacritty*|*wezterm*|*kitty*|*konsole*|*gnome-t*|*[Ww]arp*)
                     HOST_PID=$_pid; break ;;
             esac
             _pid=$_ppid
@@ -90,8 +94,8 @@ if [ "$HOST_PID" -eq 0 ]; then
 
     # Re-write with PID if we found it
     if [ "$HOST_PID" -ne 0 ]; then
-        printf '{"timestamp":"%s","timestamp_epoch_ns":%s,"session_id":"%s","project":"%s","host_pid":%d,"stopped":false,"cwd":"%s"}' \
-            "$TIMESTAMP" "$TIMESTAMP_EPOCH_NS" "$SESSION_ID" "$PROJECT" "$HOST_PID" "$FINAL_CWD" > "$TIMER_FILE"
+        printf '{"timestamp":"%s","timestamp_epoch_ns":%s,"session_id":"%s","project":"%s","host_pid":%d,"claude_pid":%d,"stopped":false,"cwd":"%s"}' \
+            "$TIMESTAMP" "$TIMESTAMP_EPOCH_NS" "$SESSION_ID" "$PROJECT" "$HOST_PID" "$CLAUDE_PID" "$FINAL_CWD" > "$TIMER_FILE"
         countdown_debug_log resume "updated host pid session=$SESSION_ID host_pid=$HOST_PID"
     fi
 fi

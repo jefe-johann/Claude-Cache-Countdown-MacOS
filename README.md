@@ -4,7 +4,7 @@ Note: if you happen to find this organically, this project is a work in progress
 
 A live cache-expiry countdown for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) sessions, so you know exactly how long you have before your prompt cache drains and your next message gets *expensive*.
 
-![Cache countdown in terminal tabs](img/Screenshot%202026-03-14%20035733.png)
+![Cache countdown in Claude Code](img/Screenshot%202026-03-14%20035733.png)
 
 ## Why it exists
 
@@ -12,16 +12,16 @@ Anthropic caches your conversation context for 5 minutes by default (1 hour on C
 
 **One concrete example:** a 500K-token session that lands inside the cache window costs about **$0.50**. Miss the window and the same message costs **$6.25**. Being one second late cost you $5.75.
 
-This tool puts the countdown right on your terminal tab so you never get surprised by it.
+This tool puts the countdown in Claude Code's status line so you never get surprised by it.
 
 ## What it does
 
-- **Live tab-title countdown** — a background process takes over your terminal tab title while the cache is draining, then flips to a clear expired warning when the window closes.
-- **Cost-at-risk in your status line** — shows the live dollar value (or token count) of what you'd pay if your cache expired right now, embedded in Claude Code's native bottom status line.
+- **Live status-line countdown** — Claude Code refreshes the bottom status line every second while the cache is draining.
+- **Cost-at-risk in your status line** — shows the live dollar value (or token count) of what you'd pay if your cache expired right now.
 - **Configurable alerts** — optional sound when 60 seconds remain.
 - **Multi-session aware** — tracks separate countdowns across multiple Claude Code tabs.
-- **Warp-friendly** — keeps Warp's normal auto-title behavior during active responses, and only takes over when the cache starts draining.
-- **No background daemon** — the ticker only runs while a countdown is active, then exits.
+- **Terminal-friendly** — does not write tab titles, terminal bells, or terminal escape codes.
+- **No daemon** — the alert watcher only runs during a stopped countdown, then exits.
 
 Built and used on macOS. Linux should work in theory but is currently untested.
 
@@ -44,7 +44,7 @@ If you'd rather wire things up by hand, see [docs/manual-install.md](docs/manual
 bash uninstall.sh
 ```
 
-Removes the project's hooks and config, deletes timer files and the debug log, and stops any running ticker processes. If the installer backed up a previous `statusLine` command, the original is restored; otherwise the wrapper is removed. The repo clone itself is left in place.
+Removes the project's hooks and config, deletes timer files and the debug log, and stops any alert watcher or legacy ticker processes. If the installer backed up a previous `statusLine` command, the original is restored; otherwise the wrapper is removed. The repo clone itself is left in place.
 
 - `--dry-run` prints exactly what would be changed without touching anything
 - `--yes` skips the confirmation prompt for non-interactive use
@@ -61,7 +61,6 @@ ENABLE_ALERTS=true
 ALERT_60S_SOUND="/System/Library/Sounds/Glass.aiff"
 COUNTDOWN_DEBUG=false
 COUNTDOWN_DEBUG_LOG_FILE="$HOME/.claude/state/cache-countdown-debug.log"
-WARP_AGENT_STATUS_NUDGE=true
 ```
 
 - `CACHE_TTL_SECONDS=300` — Pro / Standard 5-minute TTL (default)
@@ -69,10 +68,9 @@ WARP_AGENT_STATUS_NUDGE=true
 - `STATUSLINE_DISPLAY_MODE=dollars` — show the re-cache cost delta, like `$5.75 at risk`
 - `STATUSLINE_DISPLAY_MODE=tokens` — show the cached prompt size instead, like `500K tokens at risk`
 - `ENABLE_ALERTS=false` — disable the 60-second alert
-- `ALERT_60S_SOUND` — any readable sound file on macOS; falls back to a terminal bell if playback is unavailable
-- `COUNTDOWN_DEBUG=true` — enable verbose hook/ticker logging while debugging Warp behavior
+- `ALERT_60S_SOUND` — any readable sound file on macOS; skipped if playback is unavailable
+- `COUNTDOWN_DEBUG=true` — enable verbose hook and alert watcher logging while debugging
 - `COUNTDOWN_DEBUG_LOG_FILE` — override the debug log path if you want it somewhere else
-- `WARP_AGENT_STATUS_NUDGE=false` — disable the Warp-specific stale permission-title reset
 
 ## How it works
 
@@ -83,28 +81,31 @@ Claude Code session is working...
 Agent stops
     |
     v
-Stop hook --------> sets stopped=true, timestamp=now, starts background ticker
+Stop hook --------> sets stopped=true, timestamp=now, starts alert watcher
     |
     v
-Background ticker -> polls the timer file a few times per second and writes `⏱ M:SS | project` to the real TTY when the visible second changes
+Status line ------> refreshes every second and shows `⏱ M:SS cache`
     |
     v
-Cache expires -----> writes `⚠️ | project`
+Alert watcher ----> plays the configured sound once when 60 seconds remain
+    |
+    v
+Cache expires -----> status line shows `⚠️ Cache Expired`
     |
     v
 User sends new message
     |
     v
-Resume hook ------> sets stopped=false, terminal takes the tab title back
+Resume hook ------> sets stopped=false, countdown segment disappears
 ```
 
 While the agent is working, every API call resets the cache, so the countdown only matters once the agent stops. For protocol details, custom hooks, or non-Claude-Code integrations, see [docs/extending.md](docs/extending.md).
 
 ### Cost at risk
 
-The status line wrapper reads Claude Code's status line JSON, computes the cost delta between a cache hit and a cache miss for your current context, and appends it to the bar. By default it shows money (`$5.75 at risk`); set `STATUSLINE_DISPLAY_MODE=tokens` to show cache size (`500K tokens at risk`) instead.
+The status line wrapper reads Claude Code's status line JSON, computes the countdown from the timer file, computes the cost delta between a cache hit and a cache miss for your current context, and appends those segments to the bar. By default it shows money (`$5.75 at risk`); set `STATUSLINE_DISPLAY_MODE=tokens` to show cache size (`500K tokens at risk`) instead.
 
-If you switch to the 1-hour Max TTL profile, the status line uses the higher 1-hour cache write delta automatically.
+If the cache expires, the countdown segment changes to `⚠️ Cache Expired` and the dollar segment changes to recache cost. If you switch to the 1-hour Max TTL profile, the status line uses the higher 1-hour cache write delta automatically.
 
 ## Prompt caching reference
 
@@ -153,9 +154,11 @@ As your context window grows, so does your financial risk if the cache expires. 
 
 ## Troubleshooting
 
-**Warp shows the at-risk status line but not the live countdown title:** restart Claude Code so the updated Stop hook relaunches the ticker with the right environment. If the tab is stuck showing `Wants to run ...`, keep `WARP_AGENT_STATUS_NUDGE=true`; the hook sends Warp's structured "Claude stopped" signal through the real TTY before writing the countdown title.
+**The status line shows cost but not a live countdown:** rerun `bash install.sh`, restart Claude Code, and confirm `~/.claude/settings.json` has `"refreshInterval": 1` under `statusLine`. The countdown appears only after the first Stop hook writes a timer file for the current session.
 
-If you need deeper visibility, set `COUNTDOWN_DEBUG=true` in `~/.claude/countdown.conf`, reproduce the issue, and inspect `~/.claude/state/cache-countdown-debug.log`. The log captures whether the Stop hook fired, which TTY it selected, whether a ticker launched, and whether title writes failed.
+**The 60-second alert does not play:** confirm `ENABLE_ALERTS=true`, `ALERT_60S_SOUND` points to a readable sound file, and `afplay` is available on macOS. This tool does not fall back to terminal bells because it intentionally avoids direct TTY writes.
+
+If you need deeper visibility, set `COUNTDOWN_DEBUG=true` in `~/.claude/countdown.conf`, reproduce the issue, and inspect `~/.claude/state/cache-countdown-debug.log`. The log captures whether the hooks fired and whether the alert watcher launched or skipped playback.
 
 For deeper integration questions, see [docs/extending.md](docs/extending.md).
 
