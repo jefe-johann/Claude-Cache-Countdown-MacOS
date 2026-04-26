@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
 # Background countdown ticker for Warp terminal.
-# Polls the timer file every second and updates the tab title:
-#   stopped=false  →  no title updates (Warp owns the tab title while Claude is working)
-#   stopped=true   →  ⏱ M:SS | project (counting down to cache expiry)
-#   expired        →  project name (cache expired, idle)
+# Polls the timer file every second and updates the tab title only while
+# the cache is actively draining.
 #
 # Runs for the lifetime of the session. Launched once by the first Stop hook;
 # stays alive across prompt cycles rather than being killed/relaunched each time.
@@ -22,6 +20,10 @@ STATE_DIR="$HOME/.claude/state"
 TIMER_FILE="$STATE_DIR/cache-timer-${SESSION_ID}.json"
 PID_FILE="$STATE_DIR/cache-timer-${SESSION_ID}.pid"
 OS_NAME="$(uname -s)"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# shellcheck source=hooks/countdown-config.sh
+. "$SCRIPT_DIR/countdown-config.sh"
 
 [ -f "$TIMER_FILE" ] || exit 0
 
@@ -37,47 +39,26 @@ START_EPOCH=$(date -u +%s)
 echo $$ > "$PID_FILE"
 trap 'rm -f "$PID_FILE"' EXIT
 
-# Sound alert state — each fires once per countdown
-_beeped_120=false
+# Sound alert state — fires once per countdown
 _beeped_60=false
-_beeped_30=false
 
-_beep() {
-    local count="$1"
-    (
-        for (( i=0; i<count; i++ )); do
-            /usr/bin/afplay /System/Library/Sounds/Ping.aiff >/dev/null 2>&1 || true
-            if [ "$i" -lt $((count - 1)) ]; then
-                sleep 0.3 || true
-            fi
-        done
-    ) >/dev/null 2>&1 &
-}
-
-# Write title — exits the script if the TTY becomes unwritable (tab closed)
-_write_title() {
-    printf '\033]0;%s\007' "$1" > "$TTY_DEV" 2>/dev/null || exit 0
-}
-
-# Disabled for now: actively reasserting a custom title while Claude is the
-# foreground process causes heavy flicker in Warp. Keeping this helper around
-# makes it easier to revisit that approach later.
-_active_title() {
-    local project="$1"
-    local separator="|"
-
-    # Warp appears more willing to reclaim a static title than one that is
-    # still changing. Alternate the separator so each active-state write is a
-    # distinct title without looking like a countdown has started.
-    if [ $(( $(date -u +%s) % 2 )) -eq 1 ]; then
-        separator="·"
+_alert_60s() {
+    if [ "$ENABLE_ALERTS" != "true" ]; then
+        return 0
     fi
 
-    if [ -n "$project" ]; then
-        printf '⏱ 5:00 %s %s' "$separator" "$project"
+    if [ -n "$ALERT_60S_SOUND" ] && [ -f "$ALERT_60S_SOUND" ] && command -v afplay >/dev/null 2>&1; then
+        afplay "$ALERT_60S_SOUND" >/dev/null 2>&1 &
     else
-        printf '⏱ 5:00'
+        printf '\a' > "$TTY_DEV" 2>/dev/null || true
     fi
+}
+
+_write_title() {
+    local title="$1"
+    # Emit both common title channels so Warp's newer session UIs have the
+    # best chance of picking up the countdown label.
+    printf '\033]0;%s\007\033]2;%s\007' "$title" "$title" > "$TTY_DEV" 2>/dev/null || exit 0
 }
 
 _mtime_epoch() {
@@ -102,6 +83,8 @@ _timestamp_epoch() {
 }
 
 while true; do
+    countdown_load_config
+
     # Exit if timer file was deleted (session ended or cleaned up)
     [ -f "$TIMER_FILE" ] || exit 0
 
@@ -112,7 +95,6 @@ while true; do
             [ "$(basename "$_jf" .jsonl)" = "$SESSION_ID" ] && continue
             _mtime=$(_mtime_epoch "$_jf" 2>/dev/null) || continue
             if [ "$_mtime" -gt "$START_EPOCH" ]; then
-                _write_title "$(grep -o '"project":"[^"]*"' "$TIMER_FILE" 2>/dev/null | cut -d'"' -f4 || echo "")"
                 exit 0
             fi
         done
@@ -123,47 +105,28 @@ while true; do
 
     if [ "$stopped" = "false" ]; then
         # Claude is working — reset alert state for next countdown
-        _beeped_120=false
         _beeped_60=false
-        _beeped_30=false
-        # Disabled for now: letting Warp own the active-session title avoids
-        # a back-and-forth flicker while Claude is still responding.
-        #
-        # _write_title "$(_active_title "$project")"
     else
-        # Claude stopped — show countdown, or project name if expired
+        # Claude stopped — show countdown while cache is still active
         ts=$(grep -o '"timestamp":"[^"]*"' "$TIMER_FILE" 2>/dev/null | cut -d'"' -f4 || echo "")
         if [ -n "$ts" ]; then
             ts_epoch=$(_timestamp_epoch "$ts")
             now=$(date -u +%s)
-            remaining=$(( 300 - (now - ts_epoch) ))
+            remaining=$(( CACHE_TTL_SECONDS - (now - ts_epoch) ))
             if [ "$remaining" -gt 0 ]; then
-                # Sound alerts at key thresholds
-                if [ "$remaining" -le 120 ] && [ "$_beeped_120" = "false" ]; then
-                    _beeped_120=true
-                    _beep 1
-                fi
                 if [ "$remaining" -le 60 ] && [ "$_beeped_60" = "false" ]; then
                     _beeped_60=true
-                    _beep 2
-                fi
-                if [ "$remaining" -le 30 ] && [ "$_beeped_30" = "false" ]; then
-                    _beeped_30=true
-                    _beep 3
+                    _alert_60s
                 fi
 
                 mins=$(( remaining / 60 ))
                 secs=$(( remaining % 60 ))
                 if [ -n "$project" ]; then
-                    printf '\033]0;⏱ %d:%02d | %s\007' "$mins" "$secs" "$project" > "$TTY_DEV" 2>/dev/null || exit 0
+                    _write_title "$(printf '⏱ %d:%02d | %s' "$mins" "$secs" "$project")"
                 else
-                    printf '\033]0;⏱ %d:%02d\007' "$mins" "$secs" > "$TTY_DEV" 2>/dev/null || exit 0
+                    _write_title "$(printf '⏱ %d:%02d' "$mins" "$secs")"
                 fi
-            else
-                _write_title "$project"
             fi
-        else
-            _write_title "$project"
         fi
     fi
 

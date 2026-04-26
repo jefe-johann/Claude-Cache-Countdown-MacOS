@@ -121,7 +121,7 @@ if [ -n "$_tty" ] && [ -w "$_tty" ]; then
     if [ "$_ticker_running" = "false" ]; then
         _kill_stale_tickers "$_tty"
         SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-        nohup bash "$SCRIPT_DIR/cache-timer-bg.sh" "$SESSION_ID" "$_tty" </dev/null >/dev/null 2>&1 &
+        nohup env WARP_DISABLE_AUTO_TITLE=true bash "$SCRIPT_DIR/cache-timer-bg.sh" "$SESSION_ID" "$_tty" </dev/null >/dev/null 2>&1 &
         disown
     fi
 fi

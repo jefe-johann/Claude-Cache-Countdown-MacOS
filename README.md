@@ -1,10 +1,10 @@
 # Claude Cache Countdown
 
-Live prompt cache TTL countdown for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) sessions. 
+Live prompt cache TTL countdown for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) sessions.
 
 > **Acknowledgments:** This project was heavily inspired by [KatsuJinCode/claude-cache-countdown](https://github.com/KatsuJinCode/claude-cache-countdown) by Julian Switzer. Julian's project laid the brilliant groundwork for using Claude Code hooks to track cache state. This repository takes those core concepts and rebuilds the core engine in Bash for a seamless, zero-window terminal experience.
 
-With Claude Opus 4.6's **1 million token context window**, prompt caching has never been more important. Anthropic caches your conversation context server-side for 5 minutes. Cache hits cost 90% less. But when your agent stops, that cache is silently draining, and the stakes are high:
+With Claude Opus 4.6's **1 million token context window**, prompt caching has never been more important. Anthropic caches your conversation context server-side for 5 minutes by default, and Claude Max supports a 1-hour TTL. Cache hits cost 90% less. But when your agent stops, that cache is silently draining, and the stakes are high:
 
 **At 500K tokens (a medium session in the premium pricing tier):**
 - Standard cache hit within 5 minutes: **$0.50**
@@ -22,9 +22,10 @@ We couldn't find anything else that does this. Prompt caching is well-documented
 ## What it does
 
 - **Fully Automatic Ticker**: A background bash process takes over your terminal tab title only while the cache is actually draining, no extra python windows to manage.
-- **Cost-At-Risk Statusline**: Automatically adds the live dollar value of your cache to Claude Code's native bottom status line.
+- **Configurable At-Risk Statusline**: Automatically adds either the live dollar value or token count of your cache risk to Claude Code's native bottom status line.
 - **Shows a live countdown** when your agent stops and the cache is draining
-- **Warp-Friendly Countdown**: Leaves Warp in charge of the tab title while Claude is actively responding, then takes over only for the actual countdown.
+- **Configurable Dotfile**: Tweak TTL and alerts from `~/.claude/countdown.conf` without editing project scripts.
+- **Warp-Compatible Countdown**: Keeps Warp auto-titles during active Claude responses, but launches the countdown ticker with a Warp title hint during `stopped=true`.
 - Tracks multiple Claude Code sessions across tabs
 - Bash-first runtime, with Python used by the installer and status line wrapper
 - Built and used on macOS
@@ -41,53 +42,34 @@ cd claude-cache-countdown
 bash install.sh
 ```
 
-The installer adds both hooks and the status line wrapper to your Claude Code settings. Restart Claude Code to load them.
+The installer adds both hooks and the status line wrapper to your Claude Code settings, and scaffolds `~/.claude/countdown.conf` the first time you run it. Restart Claude Code to load them.
 
 ### Manual install
 
-Two hooks:
-- **Stop** -- starts the countdown when the agent finishes
-- **UserPromptSubmit** -- marks the timer active again when you send a new message and hands title control back to Warp
+See [docs/manual-install.md](docs/manual-install.md) for step-by-step instructions on adding the hooks and status line wrapper by hand.
 
-Add to `~/.claude/settings.json`:
+### Config file
 
-```json
-{
-  "hooks": {
-    "Stop": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash '/path/to/claude-cache-countdown/hooks/cache-timer-write.sh'",
-            "timeout": 5
-          }
-        ]
-      }
-    ],
-    "UserPromptSubmit": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash '/path/to/claude-cache-countdown/hooks/cache-timer-resume.sh'",
-            "timeout": 5
-          }
-        ]
-      }
-    ]
-  }
-}
+The runtime reads `~/.claude/countdown.conf`:
+
+```bash
+CACHE_TTL_SECONDS=300
+STATUSLINE_DISPLAY_MODE=dollars
+ENABLE_ALERTS=true
+ALERT_60S_SOUND="/System/Library/Sounds/Glass.aiff"
 ```
 
-The installer wires up the hooks, status line wrapper, and background ticker for you. There is no separate ticker command to run.
+- `CACHE_TTL_SECONDS=300` uses the default 5-minute TTL
+- `CACHE_TTL_SECONDS=3600` uses the Max 1-hour TTL
+- `STATUSLINE_DISPLAY_MODE=dollars` shows the re-cache cost delta, like `$5.75 at risk`
+- `STATUSLINE_DISPLAY_MODE=tokens` shows the cached prompt size instead, like `500K tokens at risk`
+- `ENABLE_ALERTS=false` disables the 60-second alert
+- `ALERT_60S_SOUND` can point to any readable sound file on macOS; if sound playback is unavailable, the ticker falls back to a terminal bell
 
 ## How it works
 
 ```
-Claude Code session is working...     (timer file has stopped=false, Warp owns the tab title)
+Claude Code session is working...
     |
     v
 Agent stops
@@ -109,14 +91,16 @@ While the agent is working, every API call resets the cache. The countdown only 
 
 ### Cost at risk
 
-The status line wrapper shows how much money is at stake if the cache expires. It reads Claude Code's current status line JSON and appends a segment like `$5.75 at risk`.
+The status line wrapper reads Claude Code's current status line JSON and appends an at-risk segment. By default it shows money, like `$5.75 at risk`.
 
-This is the delta between a cache hit and a cache miss (the extra money you pay because you were late). At 500K tokens on the premium tier, a cache hit costs $0.50 but a miss forces a $6.25 re-write, so you're risking $5.75.
+If you prefer to watch the cache size directly, set `STATUSLINE_DISPLAY_MODE=tokens` in `~/.claude/countdown.conf` and the same segment becomes something like `500K tokens at risk`.
+
+This is the delta between a cache hit and a cache miss (the extra money you pay because you were late). At 500K tokens on the premium tier, a cache hit costs $0.50 but a miss forces a $6.25 re-write, so you're risking $5.75. If you switch to the 1-hour Max profile, the status line uses the higher 1-hour cache write delta instead.
 
 
 ---
 
-The timer currently counts down from 300 seconds (5:00) based on when the Stop hook fires.
+The timer counts down from the `CACHE_TTL_SECONDS` value in `~/.claude/countdown.conf`.
 
 ## Timer file format
 
@@ -136,13 +120,15 @@ The Stop hook writes one JSON file per session to `~/.claude/state/cache-timer-{
 - `stopped`: `true` = cache draining (show countdown), `false` = agent working (no custom title writes)
 - `host_pid`: PID of the process associated with the terminal tab (optional, used for per-tab tracking)
 
-The ticker calculates `remaining = 300 - (now - timestamp)`.
+The ticker calculates `remaining = CACHE_TTL_SECONDS - (now - timestamp)`.
 
 The UserPromptSubmit hook sets `stopped` to `false` when the user resumes. The Stop hook sets it back to `true` when the agent finishes. Stale files can accumulate if sessions end abruptly and can be deleted manually.
 
 ## Adapting to your environment
 
 The tool is split into three small pieces: **hooks** (write/update JSON files), **background ticker** (read one session's timer file and update the tab title), and **status line wrapper** (append the cost-at-risk segment). They communicate through simple JSON files in `~/.claude/state/`.
+
+For Warp specifically, the Stop hook launches the background ticker with `WARP_DISABLE_AUTO_TITLE=true` in that ticker process only. That keeps Warp's normal auto-title behavior while Claude is actively responding, but gives the countdown process a cleaner shot at owning the title during actual cache-drain time.
 
 ### Writing your own hooks
 
@@ -173,8 +159,8 @@ echo '{"timestamp":"'$(date -u +%Y-%m-%dT%H:%M:%S.000Z)'","session_id":"manual",
 
 | TTL | Write cost | Read cost | How to use |
 |-----|-----------|-----------|------------|
-| 5 minutes (default) | 1.25x base | 0.1x base | Claude Code uses this automatically |
-| 1 hour (opt-in) | 2x base | 0.1x base | Requires `"ttl": "1h"` in API call |
+| 5 minutes (default) | 1.25x base | 0.1x base | Default profile in `countdown.conf` |
+| 1 hour (opt-in) | 2x base | 0.1x base | Set `CACHE_TTL_SECONDS=3600` when your Claude plan/runtime uses the 1-hour TTL |
 
 ### Opus 4.6 pricing tiers
 
@@ -204,7 +190,7 @@ These numbers reflect **input token costs only**, which is what prompt caching a
 - Each API call that hits the cache resets the TTL timer
 - Cache hits improve latency (faster time-to-first-token)
 - Cache hits don't count against rate limits
-- For Claude Max subscribers: cost is flat-rate, but cache still affects latency and rate limits
+- For Claude Max subscribers: cost is flat-rate, but cache still affects latency and rate limits. Set `CACHE_TTL_SECONDS=3600` so the countdown and status line match your cache profile.
 
 See [Anthropic's prompt caching docs](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching) for details.
 
@@ -215,7 +201,14 @@ As your context window grows, so does your financial risk if the cache expires. 
 - **/compact**: Compresses the conversation history while preserving key information. This shrinks the context window significantly, giving you a smaller, cheaper cache to maintain.
 - **/clear**: Wipes the session entirely. If you've finished a major task and are moving on to something new, clearing ensures you start fresh and aren't paying to cache irrelevant history.
 
-Keeping your context small minimizes the penalty if you accidentally let the 5-minute timer expire.
+Keeping your context small minimizes the penalty if you accidentally let the configured cache timer expire.
+
+## Troubleshooting Warp Titles
+
+If Warp still shows the at-risk status line but not the live countdown title:
+
+- Restart Claude Code after reinstalling so the updated Stop hook relaunches the ticker with the new environment.
+- Check whether Warp's new sidebar is still honoring terminal title OSC updates at all; if it is not, we may need to target a different Warp surface than the session title.
 
 ## Requirements
 
