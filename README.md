@@ -2,8 +2,6 @@
 
 A live cache-expiry countdown for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) sessions, so you know exactly how long you have before your prompt cache drains and your next message gets *expensive*.
 
-![Cache countdown in terminal tabs](img/Screenshot%202026-03-14%20035733.png)
-
 ## Why it exists
 
 Anthropic caches your conversation context for 5 minutes by default (1 hour on Claude Max). Cache hits cost about 90% less than re-sending the full context. The moment your agent stops responding, that cache starts silently draining — and if your next message lands one second too late, you pay the full re-cache price.
