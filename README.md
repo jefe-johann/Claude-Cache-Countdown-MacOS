@@ -8,7 +8,7 @@ A live cache-expiry countdown for [Claude Code](https://docs.anthropic.com/en/do
 
 Anthropic caches your conversation context for 5 minutes by default (1 hour on Claude Max). Cache hits cost about 90% less than re-sending the full context. The moment your agent stops responding, that cache starts silently draining — and if your next message lands one second too late, you pay the full re-cache price.
 
-**One concrete example:** a 500K-token session that lands inside the cache window costs about **$0.50**. Miss the window and the same message costs **$6.25**. Being one second late cost you $5.75.
+**One concrete example:** a 1M-token session that lands inside the cache window costs about **$0.50**. Miss the window and the same message costs **$6.25**. Being one second late cost you $5.75.
 
 This tool puts the countdown in Claude Code's status line so you never get surprised by it.
 
@@ -112,27 +112,31 @@ Skip this section unless you want the math behind the cost numbers.
 | 5 minutes (default) | 1.25x base | 0.1x base | Default profile in `countdown.conf` |
 | 1 hour (opt-in) | 2x base | 0.1x base | Set `CACHE_TTL_SECONDS=3600` when your Claude plan/runtime uses the 1-hour TTL |
 
-### Opus 4.6 pricing tiers
+### Opus 4.7 pricing
 
-Opus 4.6 has a **pricing cliff at 200K tokens**. If your context exceeds 200K by even one token, the entire request is billed at the premium rate.
+Opus 4.7 bills the full 1M-token context window at flat rates — a 900K-token request is billed at the same per-token rate as a 9K-token request. (Earlier Opus generations had a pricing cliff at 200K; that's gone for 4.5 and newer.)
 
-| Tier | Input | Cache write (1.25x) | Cache read (0.1x) |
-|------|-------|--------------------|--------------------|
-| Standard (up to 200K) | $5.00/MTok | $6.25/MTok | $0.50/MTok |
-| Premium (200K to 1M) | $10.00/MTok | $12.50/MTok | $1.00/MTok |
+| Operation | Rate |
+|-----------|------|
+| Input tokens | $5.00/MTok |
+| Cache write, 5-min TTL (1.25x) | $6.25/MTok |
+| Cache write, 1-hour TTL (2x) | $10.00/MTok |
+| Cache read (0.1x) | $0.50/MTok |
+| Output tokens | $25.00/MTok |
 
 ### What a cache miss costs
 
-| Context size | Tier | Cache hit | Cache miss (re-write) | Cost of being late |
-|-------------|------|-----------|----------------------|-------------------|
-| 100K | Standard | $0.05 | $0.63 | $0.58 |
-| 200K | Standard | $0.10 | $1.25 | $1.15 |
-| 201K | **Premium** | $0.20 | $2.51 | **$2.31** |
-| 500K | Premium | $0.50 | $6.25 | **$5.75** |
-| 900K | Premium | $0.90 | $11.25 | **$10.35** |
-| 1M | Premium | $1.00 | $12.50 | **$11.50** |
+5-minute TTL, so cache miss = $6.25/MTok cache write, cache hit = $0.50/MTok read.
 
-Crossing the 200K threshold doubles the cost of the entire request, not just the overflow. These numbers are input token costs only — output tokens ($25-37.50/MTok) are billed the same regardless of cache state.
+| Context size | Cache hit | Cache miss (re-write) | Cost of being late |
+|-------------|-----------|----------------------|-------------------|
+| 100K | $0.05 | $0.63 | $0.58 |
+| 200K | $0.10 | $1.25 | $1.15 |
+| 500K | $0.25 | $3.13 | **$2.88** |
+| 900K | $0.45 | $5.63 | **$5.18** |
+| 1M | $0.50 | $6.25 | **$5.75** |
+
+These numbers are input token costs only — output tokens ($25/MTok) are billed the same regardless of cache state.
 
 - Cache reads are 90% cheaper than uncached input
 - Each API call that hits the cache resets the TTL timer

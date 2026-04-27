@@ -133,10 +133,10 @@ def format_tokens(token_count):
     return f"{value:.1f}".rstrip("0").rstrip(".") + suffix
 
 if total > 0:
-    if ttl_seconds == 3600:
-        rate_cents = 1900 if total > 200_000 else 950
-    else:
-        rate_cents = 1150 if total > 200_000 else 575
+    # Opus 4.7 bills the full 1M context window at standard pricing — no
+    # 200K cliff. Rate is the cache-write-minus-cache-read delta in cents
+    # per million tokens, TTL-aware.
+    rate_cents = 950 if ttl_seconds == 3600 else 575
 
     cost_cents = total * rate_cents // 1_000_000
     display_mode = os.environ.get("STATUSLINE_DISPLAY_MODE", "dollars")
