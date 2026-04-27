@@ -1,5 +1,3 @@
-Note: if you happen to find this organically, this project is a work in progress, there are some kinks I'm still working out!
-
 # Claude Cache Countdown
 
 A live cache-expiry countdown for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) sessions, so you know exactly how long you have before your prompt cache drains and your next message gets *expensive*.
